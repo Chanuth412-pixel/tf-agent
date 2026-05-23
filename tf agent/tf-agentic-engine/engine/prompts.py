@@ -24,6 +24,12 @@ private subnets, internet gateway, and route tables. Use variables for CIDR
 values (e.g., var.vpc_cidr, var.public_subnet_cidr, var.private_subnet_cidr).
 Name the VPC `aws_vpc.main` and subnets `aws_subnet.public_1` and
 `aws_subnet.private_1` so downstream phases can reference them.
+
+CRITICAL SYNTAX RULES:
+1. When defining route tables, use the exact singular block `route {...}` (do NOT use `routes`).
+2. For public internet access routes, set the `cidr_block` explicitly to "0.0.0.0/0".
+3. Declare variables and locals only in `variables.tf` or inside a single `locals {...}` block — do NOT emit naked assignments at top-level.
+4. Ensure resource names are stable and deterministic (e.g., `aws_vpc.main`, `aws_subnet.public_1`).
 """
 
 SECURITY_PROMPT = f"""
@@ -33,6 +39,12 @@ Generate the SECURITY layer only: security groups, network ACLs, IAM roles
 and policies. Use the provided `network_context` to reference `aws_vpc.main.id`
 and subnet resources. Ensure security groups reference `aws_vpc.main.id` and
 attach the standard `tags` block using `var.environment` and `var.owner`.
+
+CRITICAL SYNTAX RULES:
+1. Do NOT redefine or redeclare the `resource "aws_vpc" "main"` block — it must exist only in `network.tf`.
+2. Always reference the VPC using the exact attribute `aws_vpc.main.id`.
+3. Do NOT emit naked top-level assignments; if local values are required wrap them inside `locals {...}`.
+4. Avoid duplicating security group names between runs; use fixed resource addressing.
 """
 
 COMPUTE_PROMPT = f"""
@@ -43,6 +55,11 @@ auto-scaling groups. Reference `aws_subnet.public_1.id` or `aws_subnet.private_1
 as appropriate and reference security groups by resource address. Use
 `var.instance_type` and `var.ami_id` rather than hardcoding values.
 Include placements across subnets as necessary.
+
+CRITICAL SYNTAX RULES:
+1. Do NOT redefine the VPC or any Security Groups — reference them by resource address only.
+2. Attach instances to subnets using `subnet_id = aws_subnet.public_1.id` (do not hardcode strings).
+3. Do NOT reference resources that are not declared (e.g., `aws_key_pair`), unless explicitly created within this compute phase.
 """
 
 DATA_PROMPT = f"""
@@ -54,4 +71,3 @@ from the security phase. Use `var.db_name`, `var.db_username`, `var.db_password`
 via variables (avoid plaintext credentials in HCL files; allow variables to
 be set externally).
 """
-

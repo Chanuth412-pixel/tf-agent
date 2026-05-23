@@ -1,10 +1,11 @@
 import os
 import re
-import shutil
 import subprocess
 
 
-def parse_and_write_files(raw_output: str, target_dir="terraform_workspace", phase_filename: str = None):
+def parse_and_write_files(
+    raw_output: str, target_dir="terraform_workspace", phase_filename: str = None
+):
     """Parser that writes HCL to disk.
 
     Behavior changes:
@@ -23,9 +24,28 @@ def parse_and_write_files(raw_output: str, target_dir="terraform_workspace", pha
     current_content = []
     inside_code_block = False
 
-    file_marker_pattern = re.compile(r'^[\-=/#\s]*([\w\-.]+\.tf)[\-=/#\s]*$', re.IGNORECASE)
+    file_marker_pattern = re.compile(
+        r"^[\-=/#\s]*([\w\-.]+\.tf)[\-=/#\s]*$", re.IGNORECASE
+    )
 
-    for line in (raw_output or "").splitlines():
+    # Pre-sanitize output: remove markdown fences and common conversational prefixes
+    raw_lines = (raw_output or "").splitlines()
+    sanitized_lines = []
+    for line in raw_lines:
+        s = line.strip()
+        # strip fenced code markers
+        if s.startswith("```"):
+            continue
+        # drop obvious conversational lead-ins that models sometimes emit
+        if s.lower().startswith(
+            ("here is", "sure", "this code", "note:", "okay", "ok,")
+        ):
+            continue
+        # remove inline triple backticks if present
+        line = line.replace("```", "")
+        sanitized_lines.append(line)
+
+    for line in sanitized_lines:
         clean_line = line.strip()
 
         marker = file_marker_pattern.match(clean_line)
@@ -56,10 +76,10 @@ def parse_and_write_files(raw_output: str, target_dir="terraform_workspace", pha
         files_to_write[current_filename] = "\n".join(current_content)
 
     # If parser didn't find any file markers, and a phase filename was provided,
-    # write the raw output directly into that phase file.
+    # write the sanitized output directly into that phase file.
     if not files_to_write and phase_filename:
-        print("[Parser] No markers found; writing raw output into phase file")
-        files_to_write[phase_filename] = raw_output
+        print("[Parser] No markers found; writing sanitized raw output into phase file")
+        files_to_write[phase_filename] = "\n".join(sanitized_lines)
 
     # Before writing, if a specific phase file is targeted, remove only that file.
     if phase_filename:

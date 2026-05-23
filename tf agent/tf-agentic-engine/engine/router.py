@@ -10,7 +10,9 @@ def routing_decision_router(state: GraphState) -> str:
         return "complete"
 
     if state.get("retry_count", 0) >= state.get("max_retries", 3):
-        print(f"[Router] Max retries ({state.get('max_retries')}) reached. Forcing exit.")
+        print(
+            f"[Router] Max retries ({state.get('max_retries')}) reached. Forcing exit."
+        )
         return "complete"
 
     phase = state.get("current_phase", "network")

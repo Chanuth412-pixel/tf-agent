@@ -5,7 +5,9 @@ from engine.validator import execute_terraform_validation
 
 
 # Support a dry-run flag via env or CLI
-SKIP_VALIDATE = ("--skip-validate" in sys.argv) or (os.environ.get("SKIP_VALIDATE") == "1")
+SKIP_VALIDATE = ("--skip-validate" in sys.argv) or (
+    os.environ.get("SKIP_VALIDATE") == "1"
+)
 
 
 def validation_node_func(state: GraphState) -> dict:
