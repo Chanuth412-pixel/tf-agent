@@ -71,3 +71,20 @@ from the security phase. Use `var.db_name`, `var.db_username`, `var.db_password`
 via variables (avoid plaintext credentials in HCL files; allow variables to
 be set externally).
 """
+
+COMPLIANCE_RULES = """
+========================================================================
+CRITICAL SYNTAX & ARCHITECTURAL COMPLIANCE RULES:
+- OUTPUT RAW HCL ONLY. Do NOT use markdown code blocks (```hcl ... ```).
+- DO NOT declare 'variable {{}}' blocks. All variables are pre-defined in variables.tf.
+- DO NOT declare 'provider {{}}' or 'terraform {{}}' blocks. They live in provider.tf.
+- DO NOT re-declare or copy resource blocks from previous steps (e.g., Do NOT declare 'resource "aws_vpc" "main"' outside of the network phase).
+- Use exact AWS resource keys: Use 'ami' (NOT 'ami_id'), Use 'aws_db_instance' (NOT 'aws_rds_instance'), and do NOT place 'acl = "private"' inside aws_s3_bucket.
+========================================================================
+"""
+
+# Append compliance rules to each prompt to enforce strict boundaries
+NETWORK_PROMPT = NETWORK_PROMPT + "\n" + COMPLIANCE_RULES
+SECURITY_PROMPT = SECURITY_PROMPT + "\n" + COMPLIANCE_RULES
+COMPUTE_PROMPT = COMPUTE_PROMPT + "\n" + COMPLIANCE_RULES
+DATA_PROMPT = DATA_PROMPT + "\n" + COMPLIANCE_RULES

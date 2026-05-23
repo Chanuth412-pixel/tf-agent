@@ -1,16 +1,6 @@
-data "aws_db_subnet_group" "private_subnets" {
-  name = var.db_subnet_group_name
-}
-
-resource "aws_rds_instance" "db_instance" {
-  engine         = "mysql"
-  instance_class = var.instance_type
-  allocated_storage = 20
-  db_name        = var.db_name
-  username      = var.db_username
-  password      = var.db_password
-  vpc_security_groups = [aws_security_group.private_sg.id]
-  subnet_id       = data.aws_db_subnet_group.private_subnets.subnet_ids[0]
+# Network Phase
+resource "aws_vpc" "main" {
+  cidr_block = var.vpc_cidr
 
   tags = {
     Environment = "Production"
@@ -19,9 +9,50 @@ resource "aws_rds_instance" "db_instance" {
   }
 }
 
-resource "aws_s3_bucket" "db_logs" {
-  bucket = var.db_logs_bucket_name
-  acl    = "private"
+resource "aws_subnet" "private_1" {
+  vpc_id   = aws_vpc.main.id
+  cidr_block = var.private_subnet_cidr
+
+  tags = {
+    Environment = "Production"
+    Owner     = "LangGraph-Agent"
+    ManagedBy = "LangGraph-Agent"
+  }
+}
+
+resource "aws_subnet" "private_2" {
+  vpc_id   = aws_vpc.main.id
+  cidr_block = var.private_subnet_cidr
+
+  tags = {
+    Environment = "Production"
+    Owner     = "LangGraph-Agent"
+    ManagedBy = "LangGraph-Agent"
+  }
+}
+
+# Database Phase
+resource "aws_db_instance" "main" {
+  engine         = "mysql"
+  instance_class = var.instance_type
+  allocated_storage = 20
+  username       = var.db_username
+  password       = var.db_password
+
+  db_name = var.db_name
+
+  tags = {
+    Environment = "Production"
+    Owner     = "LangGraph-Agent"
+    ManagedBy = "LangGraph-Agent"
+  }
+}
+
+# S3 Phase
+resource "aws_s3_bucket" "main" {
+  bucket        = var.s3_bucket_name
+  acl          = "private"
+  versioning   = true
 
   tags = {
     Environment = "Production"

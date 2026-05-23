@@ -1,130 +1,82 @@
 import os
-import re
 import subprocess
+from typing import Tuple
 
 
-def parse_and_write_files(
-    raw_output: str, target_dir="terraform_workspace", phase_filename: str = None
-):
-    """Parser that writes HCL to disk.
-
-    Behavior changes:
-    - If `phase_filename` is provided, only that file is cleared before writing.
-    - The function will still attempt to extract named file markers if present.
-    - If no markers are present and `phase_filename` is given, raw_output is
-      written directly to `phase_filename` inside `target_dir`.
+def parse_and_write_files(raw_output: str, phase_filename: str) -> None:
     """
+    Cleans markdown fences and conversational leaks from the LLM output
+    and writes the raw HCL blocks into the workspace files.
+    """
+    cleaned_lines = []
 
-    print(f"[Parser] Preparing workspace at: {target_dir} (phase: {phase_filename})")
-
-    os.makedirs(target_dir, exist_ok=True)
-
-    files_to_write = {}
-    current_filename = None
-    current_content = []
-    inside_code_block = False
-
-    file_marker_pattern = re.compile(
-        r"^[\-=/#\s]*([\w\-.]+\.tf)[\-=/#\s]*$", re.IGNORECASE
-    )
-
-    # Pre-sanitize output: remove markdown fences and common conversational prefixes
-    raw_lines = (raw_output or "").splitlines()
-    sanitized_lines = []
-    for line in raw_lines:
-        s = line.strip()
-        # strip fenced code markers
-        if s.startswith("```"):
+    for line in (raw_output or "").splitlines():
+        # Remove markdown code block markers completely
+        if line.strip().startswith("```"):
             continue
-        # drop obvious conversational lead-ins that models sometimes emit
-        if s.lower().startswith(
-            ("here is", "sure", "this code", "note:", "okay", "ok,")
-        ):
+        # Catch casual conversational filler that small models output
+        if line.strip().startswith(("Here is", "Sure", "This code", "Note:", "To fix")):
             continue
-        # remove inline triple backticks if present
-        line = line.replace("```", "")
-        sanitized_lines.append(line)
+        cleaned_lines.append(line)
 
-    for line in sanitized_lines:
-        clean_line = line.strip()
+    sanitized_hcl = "\n".join(cleaned_lines).strip()
 
-        marker = file_marker_pattern.match(clean_line)
-        if marker:
-            if current_filename and current_content:
-                files_to_write[current_filename] = "\n".join(current_content)
+    # Define the workspace directory paths safely
+    workspace_dir = "terraform_workspace"
+    target_path = os.path.join(workspace_dir, phase_filename)
 
-            current_filename = marker.group(1).lower()
-            current_content = []
-            inside_code_block = False
-            continue
+    # Ensure workspace exists
+    os.makedirs(workspace_dir, exist_ok=True)
 
-        if current_filename:
-            if clean_line.startswith("```"):
-                if not inside_code_block:
-                    inside_code_block = True
-                    continue
-                else:
-                    files_to_write[current_filename] = "\n".join(current_content)
-                    current_filename = None
-                    current_content = []
-                    inside_code_block = False
-                    continue
+    # Safely clear the old phase file if it exists
+    if os.path.exists(target_path):
+        os.remove(target_path)
 
-            current_content.append(line)
-
-    if current_filename and current_content:
-        files_to_write[current_filename] = "\n".join(current_content)
-
-    # If parser didn't find any file markers, and a phase filename was provided,
-    # write the sanitized output directly into that phase file.
-    if not files_to_write and phase_filename:
-        print("[Parser] No markers found; writing sanitized raw output into phase file")
-        files_to_write[phase_filename] = "\n".join(sanitized_lines)
-
-    # Before writing, if a specific phase file is targeted, remove only that file.
-    if phase_filename:
-        target_path = os.path.join(target_dir, phase_filename)
-        if os.path.exists(target_path):
-            try:
-                os.remove(target_path)
-                print(f"[Parser] Cleared existing phase file: {target_path}")
-            except Exception as e:
-                print(f"[Parser] Warning: could not remove {target_path}: {e}")
-
-    # Write extracted files to disk without touching other phase files
-    for filename, content in files_to_write.items():
-        file_path = os.path.join(target_dir, filename)
-        os.makedirs(os.path.dirname(file_path) or target_dir, exist_ok=True)
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write((content or "").strip() + "\n")
-        print(f"[Parser] Successfully wrote clean code to: {file_path}")
-
-    return True
+    # Write the freshly sanitized HCL code
+    with open(target_path, "w", encoding="utf-8") as f:
+        f.write(sanitized_hcl + "\n")
 
 
-def execute_terraform_validation(target_dir="terraform_workspace"):
-    """Run terraform init and validate non-interactively and return (success, output)."""
+def execute_terraform_validation() -> Tuple[bool, str]:
+    """
+    Executes 'terraform validate' within the terraform_workspace directory.
+    Returns a tuple of (is_valid, error_message).
+    """
+    workspace_dir = "terraform_workspace"
 
-    print("[Validator] Initializing working directory...")
-    init_res = subprocess.run(
-        ["terraform", "init", "-input=false", "-no-color"],
-        cwd=target_dir,
-        capture_output=True,
-        text=True,
-    )
+    # Ensure workspace exists
+    if not os.path.isdir(workspace_dir):
+        return False, f"Workspace directory '{workspace_dir}' does not exist."
 
-    if init_res.returncode != 0:
-        return False, f"Initialization Failed:\n{init_res.stderr}\n{init_res.stdout}"
+    try:
+        # Run `terraform init -input=false` to ensure providers are initialized (no interactive prompts)
+        init = subprocess.run(
+            ["terraform", "init", "-input=false"],
+            cwd=workspace_dir,
+            capture_output=True,
+            text=True,
+            shell=False,
+        )
+        if init.returncode != 0:
+            msg = init.stderr or init.stdout
+            return False, f"terraform init failed: {msg.strip()}"
 
-    print("[Validator] Running terraform validate...")
-    val_res = subprocess.run(
-        ["terraform", "validate", "-input=false", "-no-color"],
-        cwd=target_dir,
-        capture_output=True,
-        text=True,
-    )
+        # Run the validate command and request JSON output where supported
+        result = subprocess.run(
+            ["terraform", "validate", "-json"],
+            cwd=workspace_dir,
+            capture_output=True,
+            text=True,
+            shell=False,
+        )
 
-    if val_res.returncode != 0:
-        return False, f"Validation Failed:\n{val_res.stderr}\n{val_res.stdout}"
+        if result.returncode == 0:
+            return True, ""
+        else:
+            error_msg = result.stderr if result.stderr else result.stdout
+            return False, (error_msg or "Unknown validation error").strip()
 
-    return True, val_res.stdout
+    except FileNotFoundError:
+        return False, "Terraform binary not found. Ensure Terraform is installed and in your PATH."
+    except Exception as e:
+        return False, str(e)
