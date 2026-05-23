@@ -40,24 +40,26 @@ def run_agentic_loop(infra_data):
         parsed_successfully = parse_and_write_files(raw_output)
 
         if parsed_successfully:
-            # Step B: Run native Terraform validation commands
-            success, validation_message = execute_terraform_validation()
+                # Step B: Run native Terraform validation commands
+                validation_result = execute_terraform_validation()
 
-            if success:
-                print(
-                    f"\n[Agent Loop] Success! Infrastructure code validated successfully on iteration {iteration}."
-                )
-                return raw_output
-            else:
-                print(
-                    f"\n[Agent Loop] Validation failed on iteration {iteration}. Preparing feedback payload..."
-                )
-                error_feedback = (
-                    f"The previous HCL output resulted in compilation errors.\n"
-                    f"Please review the explicit Terraform errors below, correct your mistakes, "
-                    f"and rewrite the complete files using the structural file markers:\n\n"
-                    f"{validation_message}"
-                )
+                if validation_result.get("is_valid"):
+                    print(
+                        f"\n[Agent Loop] Success! Infrastructure code validated successfully on iteration {iteration}."
+                    )
+                    return raw_output
+                else:
+                    print(
+                        f"\n[Agent Loop] Validation failed on iteration {iteration}. Preparing feedback payload..."
+                    )
+                    logs = validation_result.get("error_logs", [])
+                    validation_message = "\n".join(logs) if logs else "Unknown validation error"
+                    error_feedback = (
+                        f"The previous HCL output resulted in compilation errors.\n"
+                        f"Please review the explicit Terraform errors below, correct your mistakes, "
+                        f"and rewrite the complete files using the structural file markers:\n\n"
+                        f"{validation_message}"
+                    )
         else:
             error_feedback = (
                 "Failed to parse your output. Ensure you strictly utilize the file markers: "

@@ -1,6 +1,5 @@
 import os
 import subprocess
-from typing import Tuple
 
 
 def parse_and_write_files(raw_output: str, phase_filename: str) -> None:
@@ -37,16 +36,19 @@ def parse_and_write_files(raw_output: str, phase_filename: str) -> None:
         f.write(sanitized_hcl + "\n")
 
 
-def execute_terraform_validation() -> Tuple[bool, str]:
-    """
-    Executes 'terraform validate' within the terraform_workspace directory.
-    Returns a tuple of (is_valid, error_message).
-    """
+def execute_terraform_validation() -> dict:
+        """
+        Executes 'terraform validate' within the terraform_workspace directory.
+        Returns a graph-state dictionary like:
+            {"is_valid": True}
+        or
+            {"is_valid": False, "error_logs": [..]}
+        """
     workspace_dir = "terraform_workspace"
 
     # Ensure workspace exists
     if not os.path.isdir(workspace_dir):
-        return False, f"Workspace directory '{workspace_dir}' does not exist."
+        return {"is_valid": False, "error_logs": [f"Workspace directory '{workspace_dir}' does not exist."]}
 
     try:
         # Prefer offline init with pre-cached providers when available to avoid network/plugin downloads
@@ -57,16 +59,21 @@ def execute_terraform_validation() -> Tuple[bool, str]:
             # Fallback for systems without a cached plugin directory
             init_cmd = ["terraform", "init", "-input=false"]
 
-        init = subprocess.run(
-            init_cmd,
-            cwd=workspace_dir,
-            capture_output=True,
-            text=True,
-            shell=False,
-        )
+        try:
+            init = subprocess.run(
+                init_cmd,
+                cwd=workspace_dir,
+                capture_output=True,
+                text=True,
+                shell=False,
+                timeout=30,
+            )
+        except subprocess.TimeoutExpired:
+            print("[Validator] Critical: Terraform init timed out waiting for local resources.")
+            return {"is_valid": False, "error_logs": ["Terraform init timed out after 30 seconds."]}
         if init.returncode != 0:
             msg = init.stderr or init.stdout
-            return False, f"terraform init failed: {msg.strip()}"
+            return {"is_valid": False, "error_logs": [f"terraform init failed: {msg.strip()}"]}
 
         # Run the validate command and request JSON output where supported
         result = subprocess.run(
@@ -78,12 +85,12 @@ def execute_terraform_validation() -> Tuple[bool, str]:
         )
 
         if result.returncode == 0:
-            return True, ""
+            return {"is_valid": True}
         else:
             error_msg = result.stderr if result.stderr else result.stdout
-            return False, (error_msg or "Unknown validation error").strip()
+            return {"is_valid": False, "error_logs": [(error_msg or "Unknown validation error").strip()]}
 
     except FileNotFoundError:
-        return False, "Terraform binary not found. Ensure Terraform is installed and in your PATH."
+        return {"is_valid": False, "error_logs": ["Terraform binary not found. Ensure Terraform is installed and in your PATH."]}
     except Exception as e:
-        return False, str(e)
+        return {"is_valid": False, "error_logs": [str(e)]}

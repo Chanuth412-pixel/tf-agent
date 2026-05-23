@@ -17,12 +17,18 @@ def validation_node_func(state: GraphState) -> dict:
         print("[Validator] SKIP_VALIDATE enabled; forcing success (dry-run).")
         return {"is_valid": True}
 
-    success, output = execute_terraform_validation()
-    if success:
+    validation_result = execute_terraform_validation()
+    if validation_result.get("is_valid"):
         return {"is_valid": True}
     else:
         errors = state.get("error_logs", [])
-        errors.append(output)
+        # Merge any error logs from the validator into the node state
+        validator_logs = validation_result.get("error_logs", [])
+        if validator_logs:
+            errors.extend(validator_logs)
+        else:
+            # Fallback: include a textual representation if no explicit logs provided
+            errors.append(str(validation_result))
         retry = state.get("retry_count", 0) + 1
         print(f"[Validator] Validation failed. Incrementing retry_count -> {retry}")
         return {"is_valid": False, "error_logs": errors, "retry_count": retry}

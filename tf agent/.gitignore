@@ -1,0 +1,24 @@
+# Python compiled files
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# Logs
+*.log
+
+# IDE/editor files
+*.vscode/
+*.idea/
+
+# Terraform local state files
+*.tfstate
+*.tfstate.*
+.terraform/
+
+# OS files
+.DS_Store
+Thumbs.db
