@@ -4,64 +4,47 @@ import subprocess
 
 
 def clean_hcl_output(text: str) -> str:
-    """Extract only the HCL code block from LLM output.
-
-    Looks for ```hcl ... ``` or ``` ... ``` blocks and returns the inner content.
-    Falls back to a heuristic split when no fences are present.
-    """
     if not text:
         return ""
 
-    # Match triple-backtick fenced blocks optionally labeled as hcl
     match = re.search(r"```(?:hcl)?(.*?)```", text, re.DOTALL | re.IGNORECASE)
     if match:
         return match.group(1).strip()
 
-    # Heuristic fallback: if HCL-like keywords are present, split at the first HCL construct
-    if re.search(r"\b(resource|locals\s*\{|data\s+|module\s+|provider\s+|terraform\s*\{)", text, re.IGNORECASE):
-        parts = re.split(r"(?=resource\b|locals\s*\{|data\b|module\b|provider\b|terraform\s*\{)", text, 1, flags=re.IGNORECASE)
+    if "resource " in text or "locals {" in text:
+        parts = re.split(r"(?=resource |locals \{|data |module |provider |terraform \{)", text, 1)
         if len(parts) > 1:
             return parts[1].strip()
 
     return text.strip()
 
 
-def parse_and_write_files(input_data) -> bool:
-    """Write cleaned HCL to files in `terraform_workspace`.
-
-    Accepts either a raw LLM output string or a state dict mapping keys like
-    'network_hcl' -> HCL string. Returns True if at least one file was written.
-    """
+def parse_and_write_files(data, phase_filename=None):
     workspace_dir = "terraform_workspace"
     os.makedirs(workspace_dir, exist_ok=True)
 
-    files_written = 0
+    files_to_write = {}
 
-    if isinstance(input_data, dict):
+    # Handle full state dictionary (if called by the validator or main graph)
+    if isinstance(data, dict):
         files_to_write = {
-            "network.tf": input_data.get("network_hcl", ""),
-            "security.tf": input_data.get("security_hcl", ""),
-            "compute.tf": input_data.get("compute_hcl", ""),
-            "data.tf": input_data.get("data_hcl", ""),
+            "network.tf": data.get("network_hcl", ""),
+            "security.tf": data.get("security_hcl", ""),
+            "compute.tf": data.get("compute_hcl", ""),
+            "data.tf": data.get("data_hcl", "")
         }
-        for filename, content in files_to_write.items():
-            if content and content.strip():
-                cleaned = clean_hcl_output(content)
-                path = os.path.join(workspace_dir, filename)
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write(cleaned + "\n")
-                files_written += 1
-    else:
-        # Treat input_data as a raw string output from the LLM
-        raw = input_data or ""
-        cleaned = clean_hcl_output(raw)
-        if cleaned:
-            target = os.path.join(workspace_dir, "main.tf")
-            with open(target, "w", encoding="utf-8") as f:
-                f.write(cleaned + "\n")
-            files_written = 1
+    # Handle single file generation (called directly by individual nodes)
+    elif isinstance(data, str) and phase_filename:
+        files_to_write = {phase_filename: data}
 
-    return files_written > 0
+    for filename, content in files_to_write.items():
+        if content:
+            cleaned_content = clean_hcl_output(content)
+            filepath = os.path.join(workspace_dir, filename)
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(cleaned_content)
+
+    return True
 
 
 def execute_terraform_validation() -> dict:
