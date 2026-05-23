@@ -62,23 +62,26 @@ def execute_terraform_validation() -> dict:
         return {"is_valid": False, "error_logs": [f"Workspace directory '{workspace_dir}' does not exist."]}
 
     try:
-        # Offline syntax check using `terraform fmt -check` to avoid network/plugin downloads
-        fmt_check = subprocess.run(
-            ["terraform", "fmt", "-check"],
+        # Run 'fmt' without '-check' to auto-correct spacing and validate syntax
+        result = subprocess.run(
+            ["terraform", "fmt"],
             cwd=workspace_dir,
             capture_output=True,
             text=True,
             shell=False,
-            timeout=30,
+            timeout=15,
         )
 
-        if fmt_check.returncode != 0:
-            msg = fmt_check.stderr or fmt_check.stdout or "Terraform syntax formatting check failed."
+        # A non-zero return code now indicates a real syntax/formatting error
+        if result.returncode != 0:
+            msg = result.stderr or result.stdout or "Terraform syntax formatting failed."
             return {"is_valid": False, "error_logs": [msg.strip()]}
 
-        # Syntax check passed; treat as valid for offline-only validation
-        return {"is_valid": True}
+        return {"is_valid": True, "error_logs": []}
 
+    except subprocess.TimeoutExpired:
+        print("[Validator] Critical: Terraform formatting timed out.")
+        return {"is_valid": False, "error_logs": ["Validation timeout expired."]}
     except FileNotFoundError:
         return {"is_valid": False, "error_logs": ["Terraform binary not found. Ensure Terraform is installed and in your PATH."]}
     except Exception as e:
