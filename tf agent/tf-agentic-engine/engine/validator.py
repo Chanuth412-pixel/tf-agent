@@ -1,39 +1,67 @@
+import re
 import os
 import subprocess
 
 
-def parse_and_write_files(raw_output: str, phase_filename: str) -> None:
+def clean_hcl_output(text: str) -> str:
+    """Extract only the HCL code block from LLM output.
+
+    Looks for ```hcl ... ``` or ``` ... ``` blocks and returns the inner content.
+    Falls back to a heuristic split when no fences are present.
     """
-    Cleans markdown fences and conversational leaks from the LLM output
-    and writes the raw HCL blocks into the workspace files.
+    if not text:
+        return ""
+
+    # Match triple-backtick fenced blocks optionally labeled as hcl
+    match = re.search(r"```(?:hcl)?(.*?)```", text, re.DOTALL | re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+
+    # Heuristic fallback: if HCL-like keywords are present, split at the first HCL construct
+    if re.search(r"\b(resource|locals\s*\{|data\s+|module\s+|provider\s+|terraform\s*\{)", text, re.IGNORECASE):
+        parts = re.split(r"(?=resource\b|locals\s*\{|data\b|module\b|provider\b|terraform\s*\{)", text, 1, flags=re.IGNORECASE)
+        if len(parts) > 1:
+            return parts[1].strip()
+
+    return text.strip()
+
+
+def parse_and_write_files(input_data) -> bool:
+    """Write cleaned HCL to files in `terraform_workspace`.
+
+    Accepts either a raw LLM output string or a state dict mapping keys like
+    'network_hcl' -> HCL string. Returns True if at least one file was written.
     """
-    cleaned_lines = []
-
-    for line in (raw_output or "").splitlines():
-        # Remove markdown code block markers completely
-        if line.strip().startswith("```"):
-            continue
-        # Catch casual conversational filler that small models output
-        if line.strip().startswith(("Here is", "Sure", "This code", "Note:", "To fix")):
-            continue
-        cleaned_lines.append(line)
-
-    sanitized_hcl = "\n".join(cleaned_lines).strip()
-
-    # Define the workspace directory paths safely
     workspace_dir = "terraform_workspace"
-    target_path = os.path.join(workspace_dir, phase_filename)
-
-    # Ensure workspace exists
     os.makedirs(workspace_dir, exist_ok=True)
 
-    # Safely clear the old phase file if it exists
-    if os.path.exists(target_path):
-        os.remove(target_path)
+    files_written = 0
 
-    # Write the freshly sanitized HCL code
-    with open(target_path, "w", encoding="utf-8") as f:
-        f.write(sanitized_hcl + "\n")
+    if isinstance(input_data, dict):
+        files_to_write = {
+            "network.tf": input_data.get("network_hcl", ""),
+            "security.tf": input_data.get("security_hcl", ""),
+            "compute.tf": input_data.get("compute_hcl", ""),
+            "data.tf": input_data.get("data_hcl", ""),
+        }
+        for filename, content in files_to_write.items():
+            if content and content.strip():
+                cleaned = clean_hcl_output(content)
+                path = os.path.join(workspace_dir, filename)
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(cleaned + "\n")
+                files_written += 1
+    else:
+        # Treat input_data as a raw string output from the LLM
+        raw = input_data or ""
+        cleaned = clean_hcl_output(raw)
+        if cleaned:
+            target = os.path.join(workspace_dir, "main.tf")
+            with open(target, "w", encoding="utf-8") as f:
+                f.write(cleaned + "\n")
+            files_written = 1
+
+    return files_written > 0
 
 
 def execute_terraform_validation() -> dict:
