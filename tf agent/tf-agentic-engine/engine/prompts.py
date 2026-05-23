@@ -75,6 +75,7 @@ be set externally).
 COMPLIANCE_RULES = """
 ========================================================================
 CRITICAL SYNTAX & ARCHITECTURAL COMPLIANCE RULES:
+CRITICAL CONSTRAINT: Return ONLY valid, raw HCL structural syntax code blocks. Do NOT wrap your output in markdown syntax tags (such as ```hcl). Do NOT include any conversational introduction, explanation, or notes. Your response must start immediately with the resource definition and contain nothing else.
 - OUTPUT RAW HCL ONLY. Do NOT use markdown code blocks (```hcl ... ```).
 - DO NOT declare 'variable {{}}' blocks. All variables are pre-defined in variables.tf.
 - DO NOT declare 'provider {{}}' or 'terraform {{}}' blocks. They live in provider.tf.

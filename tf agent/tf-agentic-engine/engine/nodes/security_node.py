@@ -10,7 +10,10 @@ def generate_security_node(state: GraphState) -> dict:
         SECURITY_PROMPT,
         {
             "aws_input_data": state.get("aws_input_data"),
-            "network_context": state.get("network_hcl"),
+            "network_context": (
+                "An existing VPC named 'aws_vpc.main' and subnets 'aws_subnet.public_1' "
+                "and 'aws_subnet.private_1' are already declared. DO NOT rewrite them."
+            ),
         },
     )
     parse_and_write_files(hcl, phase_filename="security.tf")
