@@ -49,9 +49,16 @@ def execute_terraform_validation() -> Tuple[bool, str]:
         return False, f"Workspace directory '{workspace_dir}' does not exist."
 
     try:
-        # Run `terraform init -input=false` to ensure providers are initialized (no interactive prompts)
+        # Prefer offline init with pre-cached providers when available to avoid network/plugin downloads
+        plugin_dir = "/usr/share/terraform/plugins"
+        if os.path.isdir(plugin_dir):
+            init_cmd = ["terraform", "init", f"-plugin-dir={plugin_dir}", "-get=false"]
+        else:
+            # Fallback for systems without a cached plugin directory
+            init_cmd = ["terraform", "init", "-input=false"]
+
         init = subprocess.run(
-            ["terraform", "init", "-input=false"],
+            init_cmd,
             cwd=workspace_dir,
             capture_output=True,
             text=True,
