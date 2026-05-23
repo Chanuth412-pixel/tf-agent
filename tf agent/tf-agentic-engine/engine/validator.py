@@ -37,13 +37,13 @@ def parse_and_write_files(raw_output: str, phase_filename: str) -> None:
 
 
 def execute_terraform_validation() -> dict:
-        """
-        Executes 'terraform validate' within the terraform_workspace directory.
-        Returns a graph-state dictionary like:
-            {"is_valid": True}
-        or
-            {"is_valid": False, "error_logs": [..]}
-        """
+    """
+    Executes 'terraform validate' within the terraform_workspace directory.
+    Returns a graph-state dictionary like:
+        {"is_valid": True}
+    or
+        {"is_valid": False, "error_logs": [..]}
+    """
     workspace_dir = "terraform_workspace"
 
     # Ensure workspace exists
