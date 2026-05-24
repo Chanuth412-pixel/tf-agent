@@ -1,18 +1,15 @@
 from typing import Any
-import os
-import json
-
 from langgraph.graph import StateGraph, END
 
-from engine.state import GraphState, create_initial_state
-from engine.router import routing_decision_router
-
-# Import modular nodes
-from engine.nodes.network_node import generate_network_node
-from engine.nodes.security_node import generate_security_node
-from engine.nodes.compute_node import generate_compute_node
-from engine.nodes.data_node import generate_data_node
-from engine.nodes.validation_node import validation_node_func
+from src.state import GraphState
+from src.nodes import (
+    generate_network_node,
+    generate_security_node,
+    generate_compute_node,
+    generate_data_node,
+    validation_node_func,
+    routing_decision_router,
+)
 
 
 def build_workflow() -> Any:
@@ -49,22 +46,5 @@ def build_workflow() -> Any:
     return workflow.compile()
 
 
-if __name__ == "__main__":
-    # Load mock data
-    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    mock_path = os.path.join(repo_root, "scanner", "mock_infra.json")
-    if not os.path.exists(mock_path):
-        print(f"Missing mock file: {mock_path}")
-        exit(1)
-
-    with open(mock_path, "r", encoding="utf-8") as f:
-        raw = json.load(f)
-
-    initial = create_initial_state(raw)
-
-    print("Initializing Modular LangGraph Engine...")
-    app = build_workflow()
-    final = app.invoke(initial)
-
-    print("--- FINAL STATE ---")
-    print(final)
+# Export compiled app
+app = build_workflow()
