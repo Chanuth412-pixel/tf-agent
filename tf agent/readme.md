@@ -1,6 +1,6 @@
 # TF-Agentic-Engine
 
-## 📖 Overview
+##  Overview
 
 **TF-Agentic-Engine** is an autonomous Infrastructure-as-Code generator.
 
@@ -10,7 +10,7 @@ The engine also includes a self-healing loop. It validates the generated Terrafo
 
 ---
 
-## 🏗️ Core Architecture
+##  Core Architecture
 
 The project follows a clean, modular structure:
 
@@ -24,7 +24,7 @@ The project follows a clean, modular structure:
 
 ---
 
-## ⚙️ Runtime Flow
+##  Runtime Flow
 
 1. **Discover** - Fetch the current AWS infrastructure state using `boto3`.
 2. **Initialize** - Add the discovered AWS data into the LangGraph state.
@@ -35,7 +35,7 @@ The project follows a clean, modular structure:
 
 ---
 
-## 🚀 Quick Start Guide
+##  Quick Start Guide
 
 Follow these steps to set up and run the pipeline.
 
