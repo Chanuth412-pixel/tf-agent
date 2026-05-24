@@ -44,7 +44,7 @@ Quick Start Guide
 pip install -r requirements.txt
 2. Check Ollama
 
-Make sure Ollama is running, then download the model:
+Make sure Ollama is running, then download the model (or any other model):
 
 ollama pull llama3.2
 3. Update settings
