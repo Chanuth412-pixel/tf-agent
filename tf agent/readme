@@ -1,57 +1,61 @@
 TF-Agentic-Engine
-📖 Overview
-Purpose: This engine converts scanned or legacy infrastructure JSON into modular, production-ready Terraform HCL using a local LLM. It automatically validates the generated code with Terraform and iterates autonomously until the syntax is completely valid.
+Overview
 
-🏗️ Core Architecture
-The project follows a clean, modular structure:
+This tool takes old or scanned infrastructure JSON files and turns them into clean Terraform code.
 
-main.py - Entry Point: Loads the mock infrastructure data and invokes the execution graph.
+It uses a local AI model to generate the code, then checks the Terraform files for errors. If there are mistakes, it fixes them and tries again until the code is valid.
 
-src/agent.py - Agent: Compiles the LangGraph StateGraph and exports the application (app).
+Core Architecture
 
-src/nodes.py - Nodes & Routing: Contains phase generators (Network, Security, Compute, Data), the validation node, and the routing logic.
+The project is split into simple files:
 
-src/state.py - State Management: Defines GraphState and the create_initial_state() function.
+main.py
+Starts the program. It loads the mock infrastructure data and runs the engine.
 
-src/utils.py - Utilities: Houses prompts, the LLM client, HCL regex cleaning, file writing, and Terraform validation logic.
+src/agent.py
+Builds the LangGraph workflow and creates the app.
 
-config/settings.py - Configuration: Centralized constants including model name, Ollama URL, context limits, and max iterations.
+src/nodes.py
+Contains the main steps: Network, Security, Compute, Data, validation, and routing logic.
 
-⚙️ Runtime Flow
+src/state.py
+Stores the current state of the workflow and creates the first state.
+
+src/utils.py
+Contains helper functions, prompts, the LLM connection, code cleaning, file writing, and Terraform validation.
+
+config/settings.py
+Stores settings like the model name, Ollama URL, memory/context size, and max retry count.
+
+Runtime Flow
 Load data from scanner/mock_infra.json.
-
-Create the initial LangGraph state.
-
-Execute domain nodes sequentially: Network → Security → Compute → Data.
-
-Write the generated code to individual files inside the terraform_workspace/ directory.
-
-Run terraform fmt to validate syntax and detect structural issues.
-
-Route back to specific nodes to self-correct and retry until the code is valid or the iteration limit is reached.
-
-🚀 Quick Start Guide
-Follow these steps to set up and run the pipeline locally.
-
-1. Install Dependencies
-
-Bash
+Create the starting state.
+Generate Terraform code step by step:
+Network
+Security
+Compute
+Data
+Save the generated code into terraform_workspace/.
+Run terraform fmt to check the Terraform code.
+If there are errors, go back to the correct step and fix them.
+Repeat until the code is valid or the retry limit is reached.
+Quick Start Guide
+1. Install dependencies
 pip install -r requirements.txt
-2. Verify Ollama Status
-Ensure your local Ollama server is running and pull the necessary LLM for testing:
+2. Check Ollama
 
-Bash
+Make sure Ollama is running, then download the model:
+
 ollama pull llama3.2
-3. Update Configuration
-Open config/settings.py to update the model type and NUM_CTX (max memory) to match the model you just pulled.
+3. Update settings
 
-4. Clean the Workspace
-Remove any lingering Terraform files from previous runs to ensure a clean generation state:
+Open:
 
-Bash
+config/settings.py
+
+Update the model name and NUM_CTX value to match the model you are using.
+
+4. Clean old Terraform files
 rm -f terraform_workspace/*.tf
-5. Run the Pipeline
-Execute the main application to start the generation loop:
-
-Bash
+5. Run the project
 python3 main.py
