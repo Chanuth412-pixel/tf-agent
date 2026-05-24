@@ -1,9 +1,57 @@
-Install Dependencies : pip install -r requirements.txt
+TF-Agentic-Engine
+📖 Overview
+Purpose: This engine converts scanned or legacy infrastructure JSON into modular, production-ready Terraform HCL using a local LLM. It automatically validates the generated code with Terraform and iterates autonomously until the syntax is completely valid.
 
-Verify Ollama Status: ollama pull llama3.2
+🏗️ Core Architecture
+The project follows a clean, modular structure:
 
-Run the Pipeline: python engine/app.py
+main.py - Entry Point: Loads the mock infrastructure data and invokes the execution graph.
 
-New Run the Pipeline : python3 main.py
+src/agent.py - Agent: Compiles the LangGraph StateGraph and exports the application (app).
 
-Readability: python engine/graph_app.py --skip-validate
+src/nodes.py - Nodes & Routing: Contains phase generators (Network, Security, Compute, Data), the validation node, and the routing logic.
+
+src/state.py - State Management: Defines GraphState and the create_initial_state() function.
+
+src/utils.py - Utilities: Houses prompts, the LLM client, HCL regex cleaning, file writing, and Terraform validation logic.
+
+config/settings.py - Configuration: Centralized constants including model name, Ollama URL, context limits, and max iterations.
+
+⚙️ Runtime Flow
+Load data from scanner/mock_infra.json.
+
+Create the initial LangGraph state.
+
+Execute domain nodes sequentially: Network → Security → Compute → Data.
+
+Write the generated code to individual files inside the terraform_workspace/ directory.
+
+Run terraform fmt to validate syntax and detect structural issues.
+
+Route back to specific nodes to self-correct and retry until the code is valid or the iteration limit is reached.
+
+🚀 Quick Start Guide
+Follow these steps to set up and run the pipeline locally.
+
+1. Install Dependencies
+
+Bash
+pip install -r requirements.txt
+2. Verify Ollama Status
+Ensure your local Ollama server is running and pull the necessary LLM for testing:
+
+Bash
+ollama pull llama3.2
+3. Update Configuration
+Open config/settings.py to update the model type and NUM_CTX (max memory) to match the model you just pulled.
+
+4. Clean the Workspace
+Remove any lingering Terraform files from previous runs to ensure a clean generation state:
+
+Bash
+rm -f terraform_workspace/*.tf
+5. Run the Pipeline
+Execute the main application to start the generation loop:
+
+Bash
+python3 main.py
