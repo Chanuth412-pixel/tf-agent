@@ -130,16 +130,33 @@ def clean_hcl_output(text: str) -> str:
     if not text:
         return ""
 
-    match = re.search(r"```(?:hcl)?(.*?)```", text, re.DOTALL | re.IGNORECASE)
+    # 1) Prefer explicit triple-backtick HCL blocks (```hcl ... ``` or ``` ... ```)
+    match = re.search(r"```(?:hcl)?\s*(.*?)\s*```", text, re.DOTALL | re.IGNORECASE)
     if match:
-        return match.group(1).strip()
+        content = match.group(1)
+    else:
+        # 2) No fenced block found — remove stray leading language tags or single-word markers
+        lines = text.splitlines()
+        i = 0
+        # Drop leading lines that are empty or only contain fence markers or a single language tag like 'hcl'
+        while i < len(lines) and re.match(r'^\s*(?:```\w*|```|hcl|terraform|json|yaml)?\s*$', lines[i], re.IGNORECASE):
+            i += 1
+        content = "\n".join(lines[i:]).strip()
 
-    if "resource " in text or "locals {" in text:
-        parts = re.split(r"(?=resource |locals \{|data |module |provider |terraform \{)", text, 1)
-        if len(parts) > 1:
-            return parts[1].strip()
+        # 3) Try to find the first real HCL construct if extra prose remains
+        m = re.search(r"(?=resource\s+|locals\s*\{|data\s+|module\s+|provider\s+\{|variable\s+)", content)
+        if m:
+            content = content[m.start():].strip()
 
-    return text.strip()
+    # 4) Final cleanup: strip any remaining leading/trailing fence tokens or lone language tags
+    # Remove any leading single-line language tags like 'hcl' or 'terraform'
+    content = re.sub(r'^\s*(?:```\w*|```|hcl|terraform|json|yaml)\s*\n', '', content, flags=re.IGNORECASE)
+    # Remove trailing fences
+    content = re.sub(r'\n?```+\s*$', '', content, flags=re.IGNORECASE)
+    # Remove stray inline 'hcl' tokens on their own lines
+    content = re.sub(r'^\s*hcl\s*$', '', content, flags=re.IGNORECASE | re.MULTILINE)
+
+    return content.strip()
 
 
 def parse_and_write_files(data, phase_filename=None):
