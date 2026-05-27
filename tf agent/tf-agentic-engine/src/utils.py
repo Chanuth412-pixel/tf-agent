@@ -109,11 +109,12 @@ You are an expert Terraform engineer.
 
 CRITICAL INSTRUCTION: You must output ONLY valid Terraform HCL wrapped in ```hcl``` blocks.
 DO NOT output any conversational text.
-DO NOT add titles like "Network Layer:" or "Data layer:".
+DO NOT add titles like "Network Layer:" or "Data layer:."
 DO NOT add explanations.
 Your entire output must be parseable by the `terraform fmt` command.
 
-{mode_instructions}
+{aws_input_data}
+{user_prompt}
 """
 
     full_prompt = BASE_SYSTEM_INSTRUCTION + "\n" + prompt_template
