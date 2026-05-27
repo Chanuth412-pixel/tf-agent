@@ -43,12 +43,16 @@ def generate_network_node(state: GraphState) -> dict:
         {state.get('user_prompt')}
         """
     elif mode == "import":
-        mode_instructions = """
-        MODE: IMPORT EXISTING INFRASTRUCTURE
-        Read the provided AWS input data. Generate the HCL resource blocks matching the data EXACTLY.
-        Additionally, you MUST generate Terraform 1.5+ `import {{ }}` blocks for every resource so Terraform can adopt them.
-        Example: import {{ to = aws_vpc.main id = "vpc-12345" }}
-        """
+                mode_instructions = """
+                MODE: IMPORT EXISTING INFRASTRUCTURE
+                Read the provided AWS input data. Generate the HCL resource blocks matching the data EXACTLY.
+                Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
+                Example syntax:
+                import {{
+                    to = aws_vpc.main
+                    id = "vpc-12345"
+                }}
+                """
     elif mode == "clone":
         mode_instructions = """
         MODE: CLONE INFRASTRUCTURE
@@ -76,12 +80,16 @@ def generate_security_node(state: GraphState) -> dict:
         {state.get('user_prompt')}
         """
     elif mode == "import":
-        mode_instructions = """
-        MODE: IMPORT EXISTING INFRASTRUCTURE
-        Read the provided AWS input data. Generate the HCL resource blocks matching the data EXACTLY.
-        Additionally, you MUST generate Terraform 1.5+ `import {{ }}` blocks for every resource so Terraform can adopt them.
-        Example: import {{ to = aws_vpc.main id = "vpc-12345" }}
-        """
+                mode_instructions = """
+                MODE: IMPORT EXISTING INFRASTRUCTURE
+                Read the provided AWS input data. Generate the HCL resource blocks matching the data EXACTLY.
+                Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
+                Example syntax:
+                import {{
+                    to = aws_vpc.main
+                    id = "vpc-12345"
+                }}
+                """
     elif mode == "clone":
         mode_instructions = """
         MODE: CLONE INFRASTRUCTURE
@@ -119,12 +127,16 @@ def generate_compute_node(state: GraphState) -> dict:
         {state.get('user_prompt')}
         """
     elif mode == "import":
-        mode_instructions = """
-        MODE: IMPORT EXISTING INFRASTRUCTURE
-        Read the provided AWS input data. Generate the HCL resource blocks matching the data EXACTLY.
-        Additionally, you MUST generate Terraform 1.5+ `import {{ }}` blocks for every resource so Terraform can adopt them.
-        Example: import {{ to = aws_vpc.main id = "vpc-12345" }}
-        """
+                mode_instructions = """
+                MODE: IMPORT EXISTING INFRASTRUCTURE
+                Read the provided AWS input data. Generate the HCL resource blocks matching the data EXACTLY.
+                Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
+                Example syntax:
+                import {{
+                    to = aws_vpc.main
+                    id = "vpc-12345"
+                }}
+                """
     elif mode == "clone":
         mode_instructions = """
         MODE: CLONE INFRASTRUCTURE
@@ -167,12 +179,16 @@ def generate_data_node(state: GraphState) -> dict:
         {state.get('user_prompt')}
         """
     elif mode == "import":
-        mode_instructions = """
-        MODE: IMPORT EXISTING INFRASTRUCTURE
-        Read the provided AWS input data. Generate the HCL resource blocks matching the data EXACTLY.
-        Additionally, you MUST generate Terraform 1.5+ `import {{ }}` blocks for every resource so Terraform can adopt them.
-        Example: import {{ to = aws_vpc.main id = "vpc-12345" }}
-        """
+                mode_instructions = """
+                MODE: IMPORT EXISTING INFRASTRUCTURE
+                Read the provided AWS input data. Generate the HCL resource blocks matching the data EXACTLY.
+                Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
+                Example syntax:
+                import {{
+                    to = aws_vpc.main
+                    id = "vpc-12345"
+                }}
+                """
     elif mode == "clone":
         mode_instructions = """
         MODE: CLONE INFRASTRUCTURE

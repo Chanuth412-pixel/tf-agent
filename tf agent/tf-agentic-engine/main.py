@@ -37,8 +37,14 @@ def main():
     print(f"[Agent] Starting generation pipeline...")
     final_state = app.invoke(initial_state)
     
-    print("--- FINAL STATE ---")
+    print("\n--- FINAL STATE ---")
     print(f"Validation Passed: {final_state.get('is_valid')}")
+    
+    # ADD THIS TO PRINT THE ACTUAL TERRAFORM ERRORS
+    if not final_state.get('is_valid'):
+        print("\n--- VALIDATION ERRORS ---")
+        for error in final_state.get('error_logs', []):
+            print(error)
 
 
 if __name__ == "__main__":
