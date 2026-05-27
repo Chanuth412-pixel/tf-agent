@@ -1,29 +1,36 @@
-from typing import TypedDict, List, Dict
+from typing import TypedDict, Dict, Any
 
 
 class GraphState(TypedDict):
-    aws_input_data: Dict
+    # --- Deployment Configuration ---
+    deployment_mode: str  # Valid values: "new", "import", "clone"
+    user_prompt: str      # The requested architecture (used when mode is "new")
+
+    # --- Existing State ---
+    aws_input_data: Dict[str, Any]
     retry_count: int
     max_retries: int
-    current_phase: str  # "network", "security", "compute", "data"
+    current_phase: str
     network_hcl: str
     security_hcl: str
     compute_hcl: str
     data_hcl: str
-    error_logs: List[str]
+    validation_results: str
     is_valid: bool
 
 
 def create_initial_state(raw_json: Dict) -> GraphState:
     return GraphState(
-        aws_input_data=raw_json,
+        deployment_mode=raw_json.get("deployment_mode", "import"),
+        user_prompt=raw_json.get("user_prompt", ""),
+        aws_input_data=raw_json.get("aws_input_data", {}),
         retry_count=0,
-        max_retries=3,
-        current_phase="network",
+        max_retries=raw_json.get("max_retries", 3),
+        current_phase=raw_json.get("current_phase", "network"),
         network_hcl="",
         security_hcl="",
         compute_hcl="",
         data_hcl="",
-        error_logs=[],
+        validation_results="",
         is_valid=False,
     )

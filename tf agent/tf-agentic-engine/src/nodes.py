@@ -32,19 +32,71 @@ def routing_decision_router(state: GraphState) -> str:
 
 def generate_network_node(state: GraphState) -> dict:
     print("[Node] Generating Network Configuration...")
-    hcl = call_cloud_llm(
-        NETWORK_PROMPT, {"aws_input_data": state.get("aws_input_data")}
-    )
+    mode = state.get("deployment_mode")
+
+    # Define mode-specific instructions
+    mode_instructions = ""
+    if mode == "new":
+        mode_instructions = f"""
+        MODE: NEW INFRASTRUCTURE
+        Ignore any existing AWS data. Generate the HCL strictly based on this user request:
+        {state.get('user_prompt')}
+        """
+    elif mode == "import":
+        mode_instructions = """
+        MODE: IMPORT EXISTING INFRASTRUCTURE
+        Read the provided AWS input data. Generate the HCL resource blocks matching the data EXACTLY.
+        Additionally, you MUST generate Terraform 1.5+ `import {{ }}` blocks for every resource so Terraform can adopt them.
+        Example: import {{ to = aws_vpc.main id = "vpc-12345" }}
+        """
+    elif mode == "clone":
+        mode_instructions = """
+        MODE: CLONE INFRASTRUCTURE
+        Read the provided AWS input data to understand the architecture. 
+        DO NOT hardcode the specific AWS IDs (e.g., vpc-12345) into the HCL. 
+        Parameterize the code using standard variables so this exact architecture can be deployed as a brand new copy in a different region.
+        """
+
+    prompt = mode_instructions + "\n" + NETWORK_PROMPT
+
+    hcl = call_cloud_llm(prompt, {"aws_input_data": state.get("aws_input_data"), "user_prompt": state.get("user_prompt")})
     parse_and_write_files(hcl, phase_filename="network.tf")
     return {"network_hcl": hcl, "current_phase": "network"}
 
 
 def generate_security_node(state: GraphState) -> dict:
     print("[Node] Generating Security Configuration...")
+    mode = state.get("deployment_mode")
+
+    mode_instructions = ""
+    if mode == "new":
+        mode_instructions = f"""
+        MODE: NEW INFRASTRUCTURE
+        Ignore any existing AWS data. Generate the HCL strictly based on this user request:
+        {state.get('user_prompt')}
+        """
+    elif mode == "import":
+        mode_instructions = """
+        MODE: IMPORT EXISTING INFRASTRUCTURE
+        Read the provided AWS input data. Generate the HCL resource blocks matching the data EXACTLY.
+        Additionally, you MUST generate Terraform 1.5+ `import {{ }}` blocks for every resource so Terraform can adopt them.
+        Example: import {{ to = aws_vpc.main id = "vpc-12345" }}
+        """
+    elif mode == "clone":
+        mode_instructions = """
+        MODE: CLONE INFRASTRUCTURE
+        Read the provided AWS input data to understand the architecture. 
+        DO NOT hardcode the specific AWS IDs (e.g., vpc-12345) into the HCL. 
+        Parameterize the code using standard variables so this exact architecture can be deployed as a brand new copy in a different region.
+        """
+
+    prompt = mode_instructions + "\n" + SECURITY_PROMPT
+
     hcl = call_cloud_llm(
-        SECURITY_PROMPT,
+        prompt,
         {
             "aws_input_data": state.get("aws_input_data"),
+            "user_prompt": state.get("user_prompt"),
             "network_context": (
                 "An existing VPC named 'aws_vpc.main' and subnets 'aws_subnet.public_1' "
                 "and 'aws_subnet.private_1' are already declared. DO NOT rewrite them."
@@ -57,10 +109,37 @@ def generate_security_node(state: GraphState) -> dict:
 
 def generate_compute_node(state: GraphState) -> dict:
     print("[Node] Generating Compute Configuration...")
+    mode = state.get("deployment_mode")
+
+    mode_instructions = ""
+    if mode == "new":
+        mode_instructions = f"""
+        MODE: NEW INFRASTRUCTURE
+        Ignore any existing AWS data. Generate the HCL strictly based on this user request:
+        {state.get('user_prompt')}
+        """
+    elif mode == "import":
+        mode_instructions = """
+        MODE: IMPORT EXISTING INFRASTRUCTURE
+        Read the provided AWS input data. Generate the HCL resource blocks matching the data EXACTLY.
+        Additionally, you MUST generate Terraform 1.5+ `import {{ }}` blocks for every resource so Terraform can adopt them.
+        Example: import {{ to = aws_vpc.main id = "vpc-12345" }}
+        """
+    elif mode == "clone":
+        mode_instructions = """
+        MODE: CLONE INFRASTRUCTURE
+        Read the provided AWS input data to understand the architecture. 
+        DO NOT hardcode the specific AWS IDs (e.g., vpc-12345) into the HCL. 
+        Parameterize the code using standard variables so this exact architecture can be deployed as a brand new copy in a different region.
+        """
+
+    prompt = mode_instructions + "\n" + COMPUTE_PROMPT
+
     hcl = call_cloud_llm(
-        COMPUTE_PROMPT,
+        prompt,
         {
             "aws_input_data": state.get("aws_input_data"),
+            "user_prompt": state.get("user_prompt"),
             "network_context": (
                 "Available infrastructure references: vpc_id = aws_vpc.main.id, "
                 "public_subnet_id = aws_subnet.public_1.id, private_subnet_id = aws_subnet.private_1.id. "
@@ -78,10 +157,37 @@ def generate_compute_node(state: GraphState) -> dict:
 
 def generate_data_node(state: GraphState) -> dict:
     print("[Node] Generating Data Configuration...")
+    mode = state.get("deployment_mode")
+
+    mode_instructions = ""
+    if mode == "new":
+        mode_instructions = f"""
+        MODE: NEW INFRASTRUCTURE
+        Ignore any existing AWS data. Generate the HCL strictly based on this user request:
+        {state.get('user_prompt')}
+        """
+    elif mode == "import":
+        mode_instructions = """
+        MODE: IMPORT EXISTING INFRASTRUCTURE
+        Read the provided AWS input data. Generate the HCL resource blocks matching the data EXACTLY.
+        Additionally, you MUST generate Terraform 1.5+ `import {{ }}` blocks for every resource so Terraform can adopt them.
+        Example: import {{ to = aws_vpc.main id = "vpc-12345" }}
+        """
+    elif mode == "clone":
+        mode_instructions = """
+        MODE: CLONE INFRASTRUCTURE
+        Read the provided AWS input data to understand the architecture. 
+        DO NOT hardcode the specific AWS IDs (e.g., vpc-12345) into the HCL. 
+        Parameterize the code using standard variables so this exact architecture can be deployed as a brand new copy in a different region.
+        """
+
+    prompt = mode_instructions + "\n" + DATA_PROMPT
+
     hcl = call_cloud_llm(
-        DATA_PROMPT,
+        prompt,
         {
             "aws_input_data": state.get("aws_input_data"),
+            "user_prompt": state.get("user_prompt"),
             "network_context": (
                 "Available infrastructure references: vpc_id = aws_vpc.main.id, "
                 "public_subnet_id = aws_subnet.public_1.id, private_subnet_id = aws_subnet.private_1.id. "
