@@ -116,6 +116,13 @@ Your entire output must be parseable by the `terraform fmt` command.
 {aws_input_data}
 {user_prompt}
 """
+    # Enforce variable declaration rules to avoid undeclared var.* usage
+    BASE_SYSTEM_INSTRUCTION = BASE_SYSTEM_INSTRUCTION.replace(
+        "Your entire output must be parseable by the `terraform fmt` command.\n\n",
+        "Your entire output must be parseable by the `terraform fmt` command.\n\n"
+        "CRITICAL VARIABLE RULE: DO NOT use any Terraform variables (e.g., var.vpc_cidr, var.environment) unless you explicitly declare them using a variable { } block in your output. "
+        "Hardcoding values is strongly preferred to ensure independent compilation.\n\n"
+    )
 
     full_prompt = BASE_SYSTEM_INSTRUCTION + "\n" + prompt_template
     prompt = ChatPromptTemplate.from_template(full_prompt)
