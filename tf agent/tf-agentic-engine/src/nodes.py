@@ -87,11 +87,15 @@ def generate_network_node(state: GraphState) -> dict:
     prompt = mode_instructions + "\n" + NETWORK_PROMPT
 
     if mode in ("import", "clone"):
-        prompt_user = (
-            "IMPORT MODE: STRICT TRANSLATION ONLY. IGNORE ALL ARCHITECTURAL INTENT."
-            if mode == "import"
-            else "CLONE MODE: TRANSLATE AND PARAMETERIZE. IGNORE USER INTENT."
-        )
+        if mode == "import":
+            prompt_user = (
+                "ABSOLUTE MANDATE FOR IMPORT MODE:\n"
+                "1. SCOPE: ONLY generate resources explicitly listed in aws_input_data. If the JSON only has an S3 bucket, generate ONLY an aws_s3_bucket. DO NOT generate aws_db_instance or aws_autoscaling_group unless they are in the JSON.\n"
+                "2. NO REFERENCES: NEVER use Terraform cross-references. WRONG: subnet_id = aws_subnet.sub-123.id. RIGHT: subnet_id = \"subnet-123\". MUST use string literals with quotes.\n"
+                "3. NO VARIABLES: NEVER use var.* syntax. WRONG: username = var.user. RIGHT: username = \"admin\". Hardcode all values."
+            )
+        else:
+            prompt_user = "CLONE MODE: TRANSLATE AND PARAMETERIZE. IGNORE USER INTENT."
     else:
         prompt_user = state.get("user_prompt")
 
@@ -146,11 +150,15 @@ def generate_security_node(state: GraphState) -> dict:
     prompt = mode_instructions + "\n" + SECURITY_PROMPT
 
     if mode in ("import", "clone"):
-        prompt_user = (
-            "IMPORT MODE: STRICT TRANSLATION ONLY. IGNORE ALL ARCHITECTURAL INTENT."
-            if mode == "import"
-            else "CLONE MODE: TRANSLATE AND PARAMETERIZE. IGNORE USER INTENT."
-        )
+        if mode == "import":
+            prompt_user = (
+                "ABSOLUTE MANDATE FOR IMPORT MODE:\n"
+                "1. SCOPE: ONLY generate resources explicitly listed in aws_input_data. If the JSON only has an S3 bucket, generate ONLY an aws_s3_bucket. DO NOT generate aws_db_instance or aws_autoscaling_group unless they are in the JSON.\n"
+                "2. NO REFERENCES: NEVER use Terraform cross-references. WRONG: subnet_id = aws_subnet.sub-123.id. RIGHT: subnet_id = \"subnet-123\". MUST use string literals with quotes.\n"
+                "3. NO VARIABLES: NEVER use var.* syntax. WRONG: username = var.user. RIGHT: username = \"admin\". Hardcode all values."
+            )
+        else:
+            prompt_user = "CLONE MODE: TRANSLATE AND PARAMETERIZE. IGNORE USER INTENT."
     else:
         prompt_user = state.get("user_prompt")
 
@@ -215,11 +223,15 @@ def generate_compute_node(state: GraphState) -> dict:
     prompt = mode_instructions + "\n" + COMPUTE_PROMPT
 
     if mode in ("import", "clone"):
-        prompt_user = (
-            "IMPORT MODE: STRICT TRANSLATION ONLY. IGNORE ALL ARCHITECTURAL INTENT."
-            if mode == "import"
-            else "CLONE MODE: TRANSLATE AND PARAMETERIZE. IGNORE USER INTENT."
-        )
+        if mode == "import":
+            prompt_user = (
+                "ABSOLUTE MANDATE FOR IMPORT MODE:\n"
+                "1. SCOPE: ONLY generate resources explicitly listed in aws_input_data. If the JSON only has an S3 bucket, generate ONLY an aws_s3_bucket. DO NOT generate aws_db_instance or aws_autoscaling_group unless they are in the JSON.\n"
+                "2. NO REFERENCES: NEVER use Terraform cross-references. WRONG: subnet_id = aws_subnet.sub-123.id. RIGHT: subnet_id = \"subnet-123\". MUST use string literals with quotes.\n"
+                "3. NO VARIABLES: NEVER use var.* syntax. WRONG: username = var.user. RIGHT: username = \"admin\". Hardcode all values."
+            )
+        else:
+            prompt_user = "CLONE MODE: TRANSLATE AND PARAMETERIZE. IGNORE USER INTENT."
     else:
         prompt_user = state.get("user_prompt")
 
@@ -289,11 +301,15 @@ def generate_data_node(state: GraphState) -> dict:
     prompt = mode_instructions + "\n" + DATA_PROMPT
 
     if mode in ("import", "clone"):
-        prompt_user = (
-            "IMPORT MODE: STRICT TRANSLATION ONLY. IGNORE ALL ARCHITECTURAL INTENT."
-            if mode == "import"
-            else "CLONE MODE: TRANSLATE AND PARAMETERIZE. IGNORE USER INTENT."
-        )
+        if mode == "import":
+            prompt_user = (
+                "ABSOLUTE MANDATE FOR IMPORT MODE:\n"
+                "1. SCOPE: ONLY generate resources explicitly listed in aws_input_data. If the JSON only has an S3 bucket, generate ONLY an aws_s3_bucket. DO NOT generate aws_db_instance or aws_autoscaling_group unless they are in the JSON.\n"
+                "2. NO REFERENCES: NEVER use Terraform cross-references. WRONG: subnet_id = aws_subnet.sub-123.id. RIGHT: subnet_id = \"subnet-123\". MUST use string literals with quotes.\n"
+                "3. NO VARIABLES: NEVER use var.* syntax. WRONG: username = var.user. RIGHT: username = \"admin\". Hardcode all values."
+            )
+        else:
+            prompt_user = "CLONE MODE: TRANSLATE AND PARAMETERIZE. IGNORE USER INTENT."
     else:
         prompt_user = state.get("user_prompt")
 
