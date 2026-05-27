@@ -19,12 +19,17 @@ def routing_decision_router(state: GraphState) -> str:
     """
     if state.get("is_valid"):
         return "complete"
-
     if state.get("retry_count", 0) >= state.get("max_retries", 3):
         print(
             f"[Router] Max retries ({state.get('max_retries')}) reached. Forcing exit."
         )
         return "complete"
+
+    # If validation failed but retries remain, restart the pipeline from the network generation
+    # to give the whole graph a chance to correct cascading issues.
+    if not state.get("is_valid") and 0 < state.get("retry_count", 0) < state.get("max_retries", 3):
+        print("[Router] Validation failed; routing back to network for full re-run.")
+        return "fix_network"
 
     phase = state.get("current_phase", "network")
     return f"fix_{phase}"
@@ -47,22 +52,26 @@ def generate_network_node(state: GraphState) -> dict:
         User Request: {state.get('user_prompt')}
         """
     elif mode == "import":
-                mode_instructions = """
-                MODE: IMPORT EXISTING INFRASTRUCTURE
-                Read the provided AWS input data. Generate the HCL resource blocks matching the data EXACTLY.
-                Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
-                Example syntax:
-                import {{
-                    to = aws_vpc.main
-                    id = "vpc-12345"
-                }}
-                """
+        mode_instructions = """
+        MODE: IMPORT EXISTING INFRASTRUCTURE
+        You are the NETWORK generation node.
+        Read the provided AWS input data. ONLY generate network-specific resources (VPCs, Subnets, IGWs, NAT, Route Tables) that match the input EXACTLY.
+        Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
+        Example syntax:
+        import {{
+          to = aws_vpc.main
+          id = "vpc-12345"
+        }}
+        If the aws_input_data contains no network resources, output exactly: # No network resources required.
+        """
     elif mode == "clone":
         mode_instructions = """
         MODE: CLONE INFRASTRUCTURE
-        Read the provided AWS input data to understand the architecture. 
-        DO NOT hardcode the specific AWS IDs (e.g., vpc-12345) into the HCL. 
-        Parameterize the code using standard variables so this exact architecture can be deployed as a brand new copy in a different region.
+        You are the NETWORK generation node.
+        Read the provided AWS input data to understand the architecture. ONLY generate network-specific resources.
+        DO NOT hardcode the specific AWS IDs (e.g., vpc-12345) into the HCL.
+        Parameterize values using variables so this architecture can be deployed as a brand new copy in a different region.
+        If the aws_input_data contains no network resources, output exactly: # No network resources required.
         """
 
     prompt = mode_instructions + "\n" + NETWORK_PROMPT
@@ -88,22 +97,26 @@ def generate_security_node(state: GraphState) -> dict:
         User Request: {state.get('user_prompt')}
         """
     elif mode == "import":
-                mode_instructions = """
-                MODE: IMPORT EXISTING INFRASTRUCTURE
-                Read the provided AWS input data. Generate the HCL resource blocks matching the data EXACTLY.
-                Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
-                Example syntax:
-                import {{
-                    to = aws_vpc.main
-                    id = "vpc-12345"
-                }}
-                """
+        mode_instructions = """
+        MODE: IMPORT EXISTING INFRASTRUCTURE
+        You are the SECURITY generation node.
+        Read the provided AWS input data. ONLY generate security-specific resources (Security Groups, Network ACLs, IAM roles and policies) that match the input EXACTLY.
+        Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
+        Example syntax:
+        import {{
+          to = aws_security_group.vpc_sg
+          id = "sg-12345"
+        }}
+        If the aws_input_data contains no security resources, output exactly: # No security resources required.
+        """
     elif mode == "clone":
         mode_instructions = """
         MODE: CLONE INFRASTRUCTURE
-        Read the provided AWS input data to understand the architecture. 
-        DO NOT hardcode the specific AWS IDs (e.g., vpc-12345) into the HCL. 
-        Parameterize the code using standard variables so this exact architecture can be deployed as a brand new copy in a different region.
+        You are the SECURITY generation node.
+        Read the provided AWS input data to understand the architecture. ONLY generate security-specific resources.
+        DO NOT hardcode the specific AWS IDs (e.g., sg-12345) into the HCL.
+        Parameterize values using variables so this architecture can be deployed as a brand new copy in a different region.
+        If the aws_input_data contains no security resources, output exactly: # No security resources required.
         """
 
     prompt = mode_instructions + "\n" + SECURITY_PROMPT
@@ -139,22 +152,26 @@ def generate_compute_node(state: GraphState) -> dict:
         User Request: {state.get('user_prompt')}
         """
     elif mode == "import":
-                mode_instructions = """
-                MODE: IMPORT EXISTING INFRASTRUCTURE
-                Read the provided AWS input data. Generate the HCL resource blocks matching the data EXACTLY.
-                Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
-                Example syntax:
-                import {{
-                    to = aws_vpc.main
-                    id = "vpc-12345"
-                }}
-                """
+        mode_instructions = """
+        MODE: IMPORT EXISTING INFRASTRUCTURE
+        You are the COMPUTE generation node.
+        Read the provided AWS input data. ONLY generate compute-specific resources (EC2 instances, EKS resources, Launch Templates, AutoScaling) that match the input EXACTLY.
+        Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
+        Example syntax:
+        import {{
+          to = aws_instance.app
+          id = "i-0123456789abcdef0"
+        }}
+        If the aws_input_data contains no compute resources, output exactly: # No compute resources required.
+        """
     elif mode == "clone":
         mode_instructions = """
         MODE: CLONE INFRASTRUCTURE
-        Read the provided AWS input data to understand the architecture. 
-        DO NOT hardcode the specific AWS IDs (e.g., vpc-12345) into the HCL. 
-        Parameterize the code using standard variables so this exact architecture can be deployed as a brand new copy in a different region.
+        You are the COMPUTE generation node.
+        Read the provided AWS input data to understand the architecture. ONLY generate compute-specific resources.
+        DO NOT hardcode the specific AWS IDs (e.g., i-0123456789) into the HCL.
+        Parameterize values using variables so this architecture can be deployed as a brand new copy in a different region.
+        If the aws_input_data contains no compute resources, output exactly: # No compute resources required.
         """
 
     prompt = mode_instructions + "\n" + COMPUTE_PROMPT
@@ -195,22 +212,26 @@ def generate_data_node(state: GraphState) -> dict:
         User Request: {state.get('user_prompt')}
         """
     elif mode == "import":
-                mode_instructions = """
-                MODE: IMPORT EXISTING INFRASTRUCTURE
-                Read the provided AWS input data. Generate the HCL resource blocks matching the data EXACTLY.
-                Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
-                Example syntax:
-                import {{
-                    to = aws_vpc.main
-                    id = "vpc-12345"
-                }}
-                """
+        mode_instructions = """
+        MODE: IMPORT EXISTING INFRASTRUCTURE
+        You are the DATA generation node.
+        Read the provided AWS input data. ONLY generate data-specific resources (RDS instances, DB subnet groups, S3 buckets, DynamoDB) that match the input EXACTLY.
+        Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
+        Example syntax:
+        import {{
+          to = aws_db_instance.main
+          id = "db-ABCDEFGHIJK"
+        }}
+        If the aws_input_data contains no data resources, output exactly: # No data resources required.
+        """
     elif mode == "clone":
         mode_instructions = """
         MODE: CLONE INFRASTRUCTURE
-        Read the provided AWS input data to understand the architecture. 
-        DO NOT hardcode the specific AWS IDs (e.g., vpc-12345) into the HCL. 
-        Parameterize the code using standard variables so this exact architecture can be deployed as a brand new copy in a different region.
+        You are the DATA generation node.
+        Read the provided AWS input data to understand the architecture. ONLY generate data-specific resources.
+        DO NOT hardcode the specific AWS IDs (e.g., db-ABCDEFGHIJK) into the HCL.
+        Parameterize values using variables so this architecture can be deployed as a brand new copy in a different region.
+        If the aws_input_data contains no data resources, output exactly: # No data resources required.
         """
 
     prompt = mode_instructions + "\n" + DATA_PROMPT
