@@ -46,36 +46,43 @@ def generate_network_node(state: GraphState) -> dict:
         MODE: NEW INFRASTRUCTURE
         You are the NETWORK generation node.
         ONLY generate network-specific resources (VPCs, Subnets, IGWs, NAT, Route Tables).
-        Do NOT generate compute, security, or database resources.
-        Do NOT generate or import Security Groups (aws_security_group) or IAM roles. Security Groups belong strictly to the SECURITY node.
-        If the user prompt does not require network resources, output exactly: # No network resources required.
+                Do NOT generate compute, security, or database resources.
+                Do NOT generate or import Security Groups (aws_security_group) or IAM roles. Security Groups belong strictly to the SECURITY node.
+                Build the requested architecture from scratch using standard Terraform cross-references (for example: `vpc_id = aws_vpc.main.id`).
+                Explicitly declare any required variables using `variable` blocks at the top of your output and reference them where appropriate.
 
-        User Request: {state.get('user_prompt')}
+                If the user prompt does not require network resources, output exactly: # No network resources required.
+
+                User Request: {state.get('user_prompt')}
         """
     elif mode == "import":
-        mode_instructions = """
-        MODE: IMPORT EXISTING INFRASTRUCTURE
-        You are the NETWORK generation node.
+                mode_instructions = """
+                MODE: IMPORT EXISTING INFRASTRUCTURE
+                You are the NETWORK generation node.
                 Read the provided AWS input data. ONLY generate network-specific resources (VPCs, Subnets, IGWs, NAT, Route Tables) that match the input EXACTLY.
+                NEVER use `var.*` references. EXAMPLE WRONG: image_id = var.ami_id  EXAMPLE RIGHT: image_id = "ami-0c55b159cbfafe1f0"
+                EXAMPLE WRONG: instance_type = var.instance_type  EXAMPLE RIGHT: instance_type = "t3.micro"
+                EXAMPLE WRONG: Environment = var.environment  EXAMPLE RIGHT: Environment = "production"
+                ONLY use the exact hardcoded AWS IDs provided in the input JSON data (e.g., "vpc-12345", "subnet-67890"). IF an ID is missing, use a placeholder string (e.g., "subnet-000000").
                 Do NOT generate or import Security Groups (aws_security_group) or IAM roles. Security Groups belong strictly to the SECURITY node.
-        Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
-        Example syntax:
-        import {{
-          to = aws_vpc.main
-          id = "vpc-12345"
-        }}
-        If the aws_input_data contains no network resources, output exactly: # No network resources required.
-        """
+                Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
+                Example syntax:
+                import {{
+                    to = aws_vpc.main
+                    id = "vpc-12345"
+                }}
+                If the aws_input_data contains no network resources, output exactly: # No network resources required.
+                """
     elif mode == "clone":
-        mode_instructions = """
-        MODE: CLONE INFRASTRUCTURE
-        You are the NETWORK generation node.
-        Read the provided AWS input data to understand the architecture. ONLY generate network-specific resources.
-        DO NOT hardcode the specific AWS IDs (e.g., vpc-12345) into the HCL.
-        Do NOT generate or import Security Groups (aws_security_group) or IAM roles. Security Groups belong strictly to the SECURITY node.
-        Parameterize values using variables so this architecture can be deployed as a brand new copy in a different region.
-        If the aws_input_data contains no network resources, output exactly: # No network resources required.
-        """
+                mode_instructions = """
+                MODE: CLONE INFRASTRUCTURE
+                You are the NETWORK generation node.
+                Read the provided AWS input data to understand the architecture. ONLY generate network-specific resources.
+                Replace hardcoded IDs from the JSON with `var.*` references and you MUST include corresponding `variable` declaration blocks for every variable you create.
+                Parameterize values using variables so this architecture can be deployed as a brand new copy in a different region.
+                Do NOT generate or import Security Groups (aws_security_group) or IAM roles. Security Groups belong strictly to the SECURITY node.
+                If the aws_input_data contains no network resources, output exactly: # No network resources required.
+                """
 
     prompt = mode_instructions + "\n" + NETWORK_PROMPT
 
@@ -94,33 +101,38 @@ def generate_security_node(state: GraphState) -> dict:
         MODE: NEW INFRASTRUCTURE
         You are the SECURITY generation node.
         ONLY generate security-specific resources (Security Groups, Network ACLs, IAM roles and policies).
-        Do NOT generate network, compute, or database resources.
-        If the user prompt does not require security resources, output exactly: # No security resources required.
+                Do NOT generate network, compute, or database resources.
+                Build the requested security architecture from scratch using standard Terraform cross-references and explicitly define any required `variable` blocks for tunables.
 
-        User Request: {state.get('user_prompt')}
+                If the user prompt does not require security resources, output exactly: # No security resources required.
+
+                User Request: {state.get('user_prompt')}
         """
     elif mode == "import":
-        mode_instructions = """
-        MODE: IMPORT EXISTING INFRASTRUCTURE
-        You are the SECURITY generation node.
-        Read the provided AWS input data. ONLY generate security-specific resources (Security Groups, Network ACLs, IAM roles and policies) that match the input EXACTLY.
-        Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
-        Example syntax:
-        import {{
-          to = aws_security_group.vpc_sg
-          id = "sg-12345"
-        }}
-        If the aws_input_data contains no security resources, output exactly: # No security resources required.
-        """
+                mode_instructions = """
+                MODE: IMPORT EXISTING INFRASTRUCTURE
+                You are the SECURITY generation node.
+                Read the provided AWS input data. ONLY generate security-specific resources (Security Groups, Network ACLs, IAM roles and policies) that match the input EXACTLY.
+                NEVER use `var.*` references. EXAMPLE WRONG: image_id = var.ami_id  EXAMPLE RIGHT: image_id = "ami-0c55b159cbfafe1f0"
+                EXAMPLE WRONG: instance_type = var.instance_type  EXAMPLE RIGHT: instance_type = "t3.micro"
+                EXAMPLE WRONG: Environment = var.environment  EXAMPLE RIGHT: Environment = "production"
+                ONLY use the exact hardcoded AWS IDs provided in the input JSON data. IF an ID is missing, use a placeholder string.
+                Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
+                Example syntax:
+                import {{
+                    to = aws_security_group.vpc_sg
+                    id = "sg-12345"
+                }}
+                If the aws_input_data contains no security resources, output exactly: # No security resources required.
+                """
     elif mode == "clone":
-        mode_instructions = """
-        MODE: CLONE INFRASTRUCTURE
-        You are the SECURITY generation node.
-        Read the provided AWS input data to understand the architecture. ONLY generate security-specific resources.
-        DO NOT hardcode the specific AWS IDs (e.g., sg-12345) into the HCL.
-        Parameterize values using variables so this architecture can be deployed as a brand new copy in a different region.
-        If the aws_input_data contains no security resources, output exactly: # No security resources required.
-        """
+                mode_instructions = """
+                MODE: CLONE INFRASTRUCTURE
+                You are the SECURITY generation node.
+                Read the provided AWS input data to understand the architecture. ONLY generate security-specific resources.
+                Replace hardcoded IDs from the JSON with `var.*` references and include `variable` declaration blocks for every variable created. Parameterize values using variables so this architecture can be deployed as a brand new copy in a different region.
+                If the aws_input_data contains no security resources, output exactly: # No security resources required.
+                """
 
     prompt = mode_instructions + "\n" + SECURITY_PROMPT
 
@@ -149,33 +161,38 @@ def generate_compute_node(state: GraphState) -> dict:
         MODE: NEW INFRASTRUCTURE
         You are the COMPUTE generation node.
         ONLY generate compute-specific resources (EC2 instances, EKS resources, Launch Templates, AutoScaling, etc.).
-        Do NOT generate network, security, or database resources.
-        If the user prompt does not require compute resources, output exactly: # No compute resources required.
+                Do NOT generate network, security, or database resources.
+                Build the requested compute architecture from scratch using standard Terraform cross-references (e.g., `subnet_id = aws_subnet.public_1.id`) and explicitly define any required `variable` blocks for tunables like AMI and instance type.
 
-        User Request: {state.get('user_prompt')}
+                If the user prompt does not require compute resources, output exactly: # No compute resources required.
+
+                User Request: {state.get('user_prompt')}
         """
     elif mode == "import":
-        mode_instructions = """
-        MODE: IMPORT EXISTING INFRASTRUCTURE
-        You are the COMPUTE generation node.
-        Read the provided AWS input data. ONLY generate compute-specific resources (EC2 instances, EKS resources, Launch Templates, AutoScaling) that match the input EXACTLY.
-        Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
-        Example syntax:
-        import {{
-          to = aws_instance.app
-          id = "i-0123456789abcdef0"
-        }}
-        If the aws_input_data contains no compute resources, output exactly: # No compute resources required.
-        """
+                mode_instructions = """
+                MODE: IMPORT EXISTING INFRASTRUCTURE
+                You are the COMPUTE generation node.
+                Read the provided AWS input data. ONLY generate compute-specific resources (EC2 instances, EKS resources, Launch Templates, AutoScaling) that match the input EXACTLY.
+                NEVER use `var.*` references. EXAMPLE WRONG: image_id = var.ami_id  EXAMPLE RIGHT: image_id = "ami-0c55b159cbfafe1f0"
+                EXAMPLE WRONG: instance_type = var.instance_type  EXAMPLE RIGHT: instance_type = "t3.micro"
+                EXAMPLE WRONG: Environment = var.environment  EXAMPLE RIGHT: Environment = "production"
+                ONLY use the exact hardcoded AWS IDs provided in the input JSON data. IF an ID is missing, use a placeholder string.
+                Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
+                Example syntax:
+                import {{
+                    to = aws_instance.app
+                    id = "i-0123456789abcdef0"
+                }}
+                If the aws_input_data contains no compute resources, output exactly: # No compute resources required.
+                """
     elif mode == "clone":
-        mode_instructions = """
-        MODE: CLONE INFRASTRUCTURE
-        You are the COMPUTE generation node.
-        Read the provided AWS input data to understand the architecture. ONLY generate compute-specific resources.
-        DO NOT hardcode the specific AWS IDs (e.g., i-0123456789) into the HCL.
-        Parameterize values using variables so this architecture can be deployed as a brand new copy in a different region.
-        If the aws_input_data contains no compute resources, output exactly: # No compute resources required.
-        """
+                mode_instructions = """
+                MODE: CLONE INFRASTRUCTURE
+                You are the COMPUTE generation node.
+                Read the provided AWS input data to understand the architecture. ONLY generate compute-specific resources.
+                Replace hardcoded IDs from the JSON with `var.*` references and include corresponding `variable` declaration blocks for every variable you create. Parameterize values using variables so this architecture can be deployed as a brand new copy in a different region.
+                If the aws_input_data contains no compute resources, output exactly: # No compute resources required.
+                """
 
     prompt = mode_instructions + "\n" + COMPUTE_PROMPT
 
@@ -209,33 +226,38 @@ def generate_data_node(state: GraphState) -> dict:
         MODE: NEW INFRASTRUCTURE
         You are the DATA generation node.
         ONLY generate data-specific resources (RDS instances, DB subnet groups, S3 buckets, DynamoDB, etc.).
-        Do NOT generate network, compute, or security resources.
-        If the user prompt does not require data resources, output exactly: # No data resources required.
+                Do NOT generate network, compute, or security resources.
+                Build the requested data architecture from scratch using standard Terraform cross-references and explicitly define any required `variable` blocks for tunables.
 
-        User Request: {state.get('user_prompt')}
+                If the user prompt does not require data resources, output exactly: # No data resources required.
+
+                User Request: {state.get('user_prompt')}
         """
     elif mode == "import":
-        mode_instructions = """
-        MODE: IMPORT EXISTING INFRASTRUCTURE
-        You are the DATA generation node.
-        Read the provided AWS input data. ONLY generate data-specific resources (RDS instances, DB subnet groups, S3 buckets, DynamoDB) that match the input EXACTLY.
-        Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
-        Example syntax:
-        import {{
-          to = aws_db_instance.main
-          id = "db-ABCDEFGHIJK"
-        }}
-        If the aws_input_data contains no data resources, output exactly: # No data resources required.
-        """
+                mode_instructions = """
+                MODE: IMPORT EXISTING INFRASTRUCTURE
+                You are the DATA generation node.
+                Read the provided AWS input data. ONLY generate data-specific resources (RDS instances, DB subnet groups, S3 buckets, DynamoDB) that match the input EXACTLY.
+                NEVER use `var.*` references. EXAMPLE WRONG: image_id = var.ami_id  EXAMPLE RIGHT: image_id = "ami-0c55b159cbfafe1f0"
+                EXAMPLE WRONG: instance_type = var.instance_type  EXAMPLE RIGHT: instance_type = "t3.micro"
+                EXAMPLE WRONG: Environment = var.environment  EXAMPLE RIGHT: Environment = "production"
+                ONLY use the exact hardcoded AWS IDs provided in the input JSON data. IF an ID is missing, use a placeholder string.
+                Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
+                Example syntax:
+                import {{
+                    to = aws_db_instance.main
+                    id = "db-ABCDEFGHIJK"
+                }}
+                If the aws_input_data contains no data resources, output exactly: # No data resources required.
+                """
     elif mode == "clone":
-        mode_instructions = """
-        MODE: CLONE INFRASTRUCTURE
-        You are the DATA generation node.
-        Read the provided AWS input data to understand the architecture. ONLY generate data-specific resources.
-        DO NOT hardcode the specific AWS IDs (e.g., db-ABCDEFGHIJK) into the HCL.
-        Parameterize values using variables so this architecture can be deployed as a brand new copy in a different region.
-        If the aws_input_data contains no data resources, output exactly: # No data resources required.
-        """
+                mode_instructions = """
+                MODE: CLONE INFRASTRUCTURE
+                You are the DATA generation node.
+                Read the provided AWS input data to understand the architecture. ONLY generate data-specific resources.
+                Replace hardcoded IDs from the JSON with `var.*` references and include corresponding `variable` declaration blocks for every variable you create. Parameterize values using variables so this architecture can be deployed as a brand new copy in a different region.
+                If the aws_input_data contains no data resources, output exactly: # No data resources required.
+                """
 
     prompt = mode_instructions + "\n" + DATA_PROMPT
 

@@ -116,24 +116,9 @@ Your entire output must be parseable by the `terraform fmt` command.
 {aws_input_data}
 {user_prompt}
 """
-    # Enforce variable declaration rules to avoid undeclared var.* usage
-    BASE_SYSTEM_INSTRUCTION = BASE_SYSTEM_INSTRUCTION.replace(
-        "Your entire output must be parseable by the `terraform fmt` command.\n\n",
-        "Your entire output must be parseable by the `terraform fmt` command.\n\n"
-        "CRITICAL VARIABLE RULE: You are strictly FORBIDDEN from using undeclared variables. Do NOT use var.* references unless you explicitly write the variable {{ }} block in the same file.\n"
-        "EXAMPLE WRONG: image_id = var.ami_id\n"
-        "EXAMPLE RIGHT: image_id = \"ami-0c55b159cbfafe1f0\"\n"
-        "EXAMPLE WRONG: instance_type = var.instance_type\n"
-        "EXAMPLE RIGHT: instance_type = \"t3.micro\"\n"
-        "EXAMPLE WRONG: Environment = var.environment\n"
-        "EXAMPLE RIGHT: Environment = \"production\"\n"
-        "Hardcoding values is strongly preferred to ensure independent compilation. NEVER use var.something if you didn't define it.\n\n"
-        "CRITICAL SCOPE RULE: You must ONLY generate Terraform resource blocks for the EXACT resources provided in the input JSON data. Do NOT invent, assume, or generate any additional resources (e.g., aws_autoscaling_group, aws_launch_template, aws_iam_role) that are not explicitly listed in the JSON payload. If the JSON data only contains subnets and an instance, you must ONLY generate subnets and an instance.\n\n"
-        "CRITICAL DEPENDENCY RULE: Do NOT reference Terraform resource blocks that you did not define in your current response. You MUST use the exact hardcoded AWS IDs provided in the input JSON data.\n"
-        "EXAMPLE WRONG: vpc_security_group_ids = [aws_security_group.eks_sg.id]\n"
-        "EXAMPLE RIGHT: vpc_security_group_ids = [\"sg-0123456789abcdef0\"]\n"
-        "IF a required ID is NOT in the JSON data, you MUST use a hardcoded placeholder string like \"sg-12345678\". NEVER invent cross-resource references like aws_subnet.private.id.\n\n"
-    )
+    # Note: strict, mode-specific rules (variables, scope, dependencies) are
+    # intentionally applied at the node level (in `src/nodes.py`) per-mode.
+    # The base system instruction enforces only HCL-only output and no prose.
 
     full_prompt = BASE_SYSTEM_INSTRUCTION + "\n" + prompt_template
     prompt = ChatPromptTemplate.from_template(full_prompt)
