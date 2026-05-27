@@ -86,7 +86,16 @@ def generate_network_node(state: GraphState) -> dict:
 
     prompt = mode_instructions + "\n" + NETWORK_PROMPT
 
-    hcl = call_cloud_llm(prompt, {"aws_input_data": state.get("aws_input_data"), "user_prompt": state.get("user_prompt")})
+    if mode in ("import", "clone"):
+        prompt_user = (
+            "IMPORT MODE: STRICT TRANSLATION ONLY. IGNORE ALL ARCHITECTURAL INTENT."
+            if mode == "import"
+            else "CLONE MODE: TRANSLATE AND PARAMETERIZE. IGNORE USER INTENT."
+        )
+    else:
+        prompt_user = state.get("user_prompt")
+
+    hcl = call_cloud_llm(prompt, {"aws_input_data": state.get("aws_input_data"), "user_prompt": prompt_user})
     parse_and_write_files(hcl, phase_filename="network.tf")
     return {"network_hcl": hcl, "current_phase": "network"}
 
@@ -136,11 +145,20 @@ def generate_security_node(state: GraphState) -> dict:
 
     prompt = mode_instructions + "\n" + SECURITY_PROMPT
 
+    if mode in ("import", "clone"):
+        prompt_user = (
+            "IMPORT MODE: STRICT TRANSLATION ONLY. IGNORE ALL ARCHITECTURAL INTENT."
+            if mode == "import"
+            else "CLONE MODE: TRANSLATE AND PARAMETERIZE. IGNORE USER INTENT."
+        )
+    else:
+        prompt_user = state.get("user_prompt")
+
     hcl = call_cloud_llm(
         prompt,
         {
             "aws_input_data": state.get("aws_input_data"),
-            "user_prompt": state.get("user_prompt"),
+            "user_prompt": prompt_user,
             "network_context": (
                 "An existing VPC named 'aws_vpc.main' and subnets 'aws_subnet.public_1' "
                 "and 'aws_subnet.private_1' are already declared. DO NOT rewrite them."
@@ -196,11 +214,20 @@ def generate_compute_node(state: GraphState) -> dict:
 
     prompt = mode_instructions + "\n" + COMPUTE_PROMPT
 
+    if mode in ("import", "clone"):
+        prompt_user = (
+            "IMPORT MODE: STRICT TRANSLATION ONLY. IGNORE ALL ARCHITECTURAL INTENT."
+            if mode == "import"
+            else "CLONE MODE: TRANSLATE AND PARAMETERIZE. IGNORE USER INTENT."
+        )
+    else:
+        prompt_user = state.get("user_prompt")
+
     hcl = call_cloud_llm(
         prompt,
         {
             "aws_input_data": state.get("aws_input_data"),
-            "user_prompt": state.get("user_prompt"),
+            "user_prompt": prompt_user,
             "network_context": (
                 "Available infrastructure references: vpc_id = aws_vpc.main.id, "
                 "public_subnet_id = aws_subnet.public_1.id, private_subnet_id = aws_subnet.private_1.id. "
@@ -261,11 +288,20 @@ def generate_data_node(state: GraphState) -> dict:
 
     prompt = mode_instructions + "\n" + DATA_PROMPT
 
+    if mode in ("import", "clone"):
+        prompt_user = (
+            "IMPORT MODE: STRICT TRANSLATION ONLY. IGNORE ALL ARCHITECTURAL INTENT."
+            if mode == "import"
+            else "CLONE MODE: TRANSLATE AND PARAMETERIZE. IGNORE USER INTENT."
+        )
+    else:
+        prompt_user = state.get("user_prompt")
+
     hcl = call_cloud_llm(
         prompt,
         {
             "aws_input_data": state.get("aws_input_data"),
-            "user_prompt": state.get("user_prompt"),
+            "user_prompt": prompt_user,
             "network_context": (
                 "Available infrastructure references: vpc_id = aws_vpc.main.id, "
                 "public_subnet_id = aws_subnet.public_1.id, private_subnet_id = aws_subnet.private_1.id. "
