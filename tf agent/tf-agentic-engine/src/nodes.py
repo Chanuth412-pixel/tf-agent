@@ -47,6 +47,7 @@ def generate_network_node(state: GraphState) -> dict:
         You are the NETWORK generation node.
         ONLY generate network-specific resources (VPCs, Subnets, IGWs, NAT, Route Tables).
         Do NOT generate compute, security, or database resources.
+        Do NOT generate or import Security Groups (aws_security_group) or IAM roles. Security Groups belong strictly to the SECURITY node.
         If the user prompt does not require network resources, output exactly: # No network resources required.
 
         User Request: {state.get('user_prompt')}
@@ -55,7 +56,8 @@ def generate_network_node(state: GraphState) -> dict:
         mode_instructions = """
         MODE: IMPORT EXISTING INFRASTRUCTURE
         You are the NETWORK generation node.
-        Read the provided AWS input data. ONLY generate network-specific resources (VPCs, Subnets, IGWs, NAT, Route Tables) that match the input EXACTLY.
+                Read the provided AWS input data. ONLY generate network-specific resources (VPCs, Subnets, IGWs, NAT, Route Tables) that match the input EXACTLY.
+                Do NOT generate or import Security Groups (aws_security_group) or IAM roles. Security Groups belong strictly to the SECURITY node.
         Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
         Example syntax:
         import {{
@@ -70,6 +72,7 @@ def generate_network_node(state: GraphState) -> dict:
         You are the NETWORK generation node.
         Read the provided AWS input data to understand the architecture. ONLY generate network-specific resources.
         DO NOT hardcode the specific AWS IDs (e.g., vpc-12345) into the HCL.
+        Do NOT generate or import Security Groups (aws_security_group) or IAM roles. Security Groups belong strictly to the SECURITY node.
         Parameterize values using variables so this architecture can be deployed as a brand new copy in a different region.
         If the aws_input_data contains no network resources, output exactly: # No network resources required.
         """
