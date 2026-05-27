@@ -94,6 +94,10 @@ def test_fetcher_locally():
     print("[Local Test] Fetching data using your upgraded function...")
     import pprint
     data = fetch_live_infrastructure()
+    # Ensure the LLM has a deterministic Security Group ID to reference
+    # Add the exact mock SG dictionary requested by the user so import-mode prompts can use it
+    mock_sg = {'id': 'sg-0123456789abcdef0', 'type': 'aws_security_group', 'name': 'eks-cluster-sg'}
+    data.setdefault('resources', []).append(mock_sg)
     pprint.pprint(data)
     return data
 
