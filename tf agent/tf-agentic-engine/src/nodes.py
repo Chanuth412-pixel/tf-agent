@@ -39,8 +39,12 @@ def generate_network_node(state: GraphState) -> dict:
     if mode == "new":
         mode_instructions = f"""
         MODE: NEW INFRASTRUCTURE
-        Ignore any existing AWS data. Generate the HCL strictly based on this user request:
-        {state.get('user_prompt')}
+        You are the NETWORK generation node.
+        ONLY generate network-specific resources (VPCs, Subnets, IGWs, NAT, Route Tables).
+        Do NOT generate compute, security, or database resources.
+        If the user prompt does not require network resources, output exactly: # No network resources required.
+
+        User Request: {state.get('user_prompt')}
         """
     elif mode == "import":
                 mode_instructions = """
@@ -76,8 +80,12 @@ def generate_security_node(state: GraphState) -> dict:
     if mode == "new":
         mode_instructions = f"""
         MODE: NEW INFRASTRUCTURE
-        Ignore any existing AWS data. Generate the HCL strictly based on this user request:
-        {state.get('user_prompt')}
+        You are the SECURITY generation node.
+        ONLY generate security-specific resources (Security Groups, Network ACLs, IAM roles and policies).
+        Do NOT generate network, compute, or database resources.
+        If the user prompt does not require security resources, output exactly: # No security resources required.
+
+        User Request: {state.get('user_prompt')}
         """
     elif mode == "import":
                 mode_instructions = """
@@ -123,8 +131,12 @@ def generate_compute_node(state: GraphState) -> dict:
     if mode == "new":
         mode_instructions = f"""
         MODE: NEW INFRASTRUCTURE
-        Ignore any existing AWS data. Generate the HCL strictly based on this user request:
-        {state.get('user_prompt')}
+        You are the COMPUTE generation node.
+        ONLY generate compute-specific resources (EC2 instances, EKS resources, Launch Templates, AutoScaling, etc.).
+        Do NOT generate network, security, or database resources.
+        If the user prompt does not require compute resources, output exactly: # No compute resources required.
+
+        User Request: {state.get('user_prompt')}
         """
     elif mode == "import":
                 mode_instructions = """
@@ -175,8 +187,12 @@ def generate_data_node(state: GraphState) -> dict:
     if mode == "new":
         mode_instructions = f"""
         MODE: NEW INFRASTRUCTURE
-        Ignore any existing AWS data. Generate the HCL strictly based on this user request:
-        {state.get('user_prompt')}
+        You are the DATA generation node.
+        ONLY generate data-specific resources (RDS instances, DB subnet groups, S3 buckets, DynamoDB, etc.).
+        Do NOT generate network, compute, or security resources.
+        If the user prompt does not require data resources, output exactly: # No data resources required.
+
+        User Request: {state.get('user_prompt')}
         """
     elif mode == "import":
                 mode_instructions = """
