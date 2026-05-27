@@ -126,6 +126,7 @@ Your entire output must be parseable by the `terraform fmt` command.
         "EXAMPLE WRONG: instance_type = var.instance_type\n"
         "EXAMPLE RIGHT: instance_type = \"t3.micro\"\n"
         "Hardcoding values is strongly preferred to ensure independent compilation. NEVER use var.something if you didn't define it.\n\n"
+        "CRITICAL SCOPE RULE: You must ONLY generate Terraform resource blocks for the EXACT resources provided in the input JSON data. Do NOT invent, assume, or generate any additional resources (e.g., aws_autoscaling_group, aws_launch_template, aws_iam_role) that are not explicitly listed in the JSON payload. If the JSON data only contains subnets and an instance, you must ONLY generate subnets and an instance.\n\n"
         "CRITICAL DEPENDENCY RULE: Do NOT reference Terraform resource blocks that you did not define in your current response. You MUST use the exact hardcoded AWS IDs provided in the input JSON data.\n"
         "EXAMPLE WRONG: vpc_security_group_ids = [aws_security_group.eks_sg.id]\n"
         "EXAMPLE RIGHT: vpc_security_group_ids = [\"sg-0123456789abcdef0\"]\n"
