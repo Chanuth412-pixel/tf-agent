@@ -187,42 +187,71 @@ def parse_and_write_files(data, phase_filename=None):
     return True
 
 
-def execute_terraform_validation() -> dict:
+def execute_terraform_validation(workspace_dir: str = "terraform_workspace") -> dict:
     """
-    Executes 'terraform validate' within the terraform_workspace directory.
-    Returns a graph-state dictionary like:
-        {"is_valid": True}
-    or
-        {"is_valid": False, "error_logs": [..]}
+    Runs offline AST syntax formatting, then local semantic validation.
     """
-    workspace_dir = "terraform_workspace"
-
-    # Ensure workspace exists
-    if not os.path.isdir(workspace_dir):
-        return {"is_valid": False, "error_logs": [f"Workspace directory '{workspace_dir}' does not exist."]}
-
+    # 1. Format the HCL (AST Syntax Check)
     try:
-        # Run 'fmt' without '-check' to auto-correct spacing and validate syntax
-        result = subprocess.run(
+        fmt_result = subprocess.run(
             ["terraform", "fmt"],
             cwd=workspace_dir,
             capture_output=True,
-            text=True,
-            shell=False,
-            timeout=15,
         )
-
-        # A non-zero return code now indicates a real syntax/formatting error
-        if result.returncode != 0:
-            msg = result.stderr or result.stdout or "Terraform syntax formatting failed."
-            return {"is_valid": False, "error_logs": [msg.strip()]}
-
-        return {"is_valid": True, "error_logs": []}
-
-    except subprocess.TimeoutExpired:
-        print("[Validator] Critical: Terraform formatting timed out.")
-        return {"is_valid": False, "error_logs": ["Validation timeout expired."]}
     except FileNotFoundError:
         return {"is_valid": False, "error_logs": ["Terraform binary not found. Ensure Terraform is installed and in your PATH."]}
-    except Exception as e:
-        return {"is_valid": False, "error_logs": [str(e)]}
+
+    if fmt_result.returncode != 0:
+        stderr = fmt_result.stderr.decode() if isinstance(fmt_result.stderr, (bytes, bytearray)) else (fmt_result.stderr or "")
+        return {"is_valid": False, "error_logs": ["Syntax Error: " + stderr.strip()]}
+
+    # 2. Define the path to your custom .terraformrc
+    project_root = os.path.abspath(os.path.join(workspace_dir, ".."))
+    env = os.environ.copy()
+    env["TF_CLI_CONFIG_FILE"] = f"{project_root}{os.sep}.terraformrc"
+
+    # 3. Offline Initialization (Using the local filesystem mirror)
+    try:
+        init_result = subprocess.run(
+            ["terraform", "init", "-backend=false"],
+            cwd=workspace_dir,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except subprocess.TimeoutExpired:
+        return {"is_valid": False, "error_logs": ["Init timed out."]}
+
+    if init_result.returncode != 0:
+        return {"is_valid": False, "error_logs": [f"Init Failed: {init_result.stderr}"]}
+
+    # 4. Deep Semantic Validation
+    try:
+        val_result = subprocess.run(
+            ["terraform", "validate", "-json"],
+            cwd=workspace_dir,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except subprocess.TimeoutExpired:
+        return {"is_valid": False, "error_logs": ["Validation timed out."]}
+
+    if val_result.returncode == 0:
+        return {"is_valid": True, "error_logs": []}
+
+    # 5. Parse JSON semantic errors to feed back to the LLM
+    try:
+        val_data = json.loads(val_result.stdout)
+        errors = []
+        for diag in val_data.get('diagnostics', []):
+            if diag.get('severity') == 'error':
+                error_msg = f"{diag.get('summary')}: {diag.get('detail', '')}"
+                errors.append(error_msg.strip())
+
+        return {"is_valid": False, "error_logs": errors}
+
+    except json.JSONDecodeError:
+        return {"is_valid": False, "error_logs": [val_result.stderr]}
