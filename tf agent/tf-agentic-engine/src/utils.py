@@ -120,8 +120,12 @@ Your entire output must be parseable by the `terraform fmt` command.
     BASE_SYSTEM_INSTRUCTION = BASE_SYSTEM_INSTRUCTION.replace(
         "Your entire output must be parseable by the `terraform fmt` command.\n\n",
         "Your entire output must be parseable by the `terraform fmt` command.\n\n"
-        "CRITICAL VARIABLE RULE: DO NOT use any Terraform variables (e.g., var.vpc_cidr, var.environment) unless you explicitly declare them using a variable {{ }} block in your output. "
-        "Hardcoding values is strongly preferred to ensure independent compilation.\n\n"
+        "CRITICAL VARIABLE RULE: You are strictly FORBIDDEN from using undeclared variables. Do NOT use var.* references unless you explicitly write the variable {{ }} block in the same file.\n"
+        "EXAMPLE WRONG: image_id = var.ami_id\n"
+        "EXAMPLE RIGHT: image_id = \"ami-0c55b159cbfafe1f0\"\n"
+        "EXAMPLE WRONG: instance_type = var.instance_type\n"
+        "EXAMPLE RIGHT: instance_type = \"t3.micro\"\n"
+        "Hardcoding values is strongly preferred to ensure independent compilation. NEVER use var.something if you didn't define it.\n\n"
         "CRITICAL DEPENDENCY RULE: Do NOT reference Terraform resource blocks that you did not define in your current response. You MUST use the exact hardcoded AWS IDs provided in the input JSON data.\n"
         "EXAMPLE WRONG: vpc_security_group_ids = [aws_security_group.eks_sg.id]\n"
         "EXAMPLE RIGHT: vpc_security_group_ids = [\"sg-0123456789abcdef0\"]\n"
