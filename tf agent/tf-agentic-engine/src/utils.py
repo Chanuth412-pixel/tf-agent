@@ -103,7 +103,21 @@ def call_cloud_llm(prompt_template: str, input_variables: dict) -> str:
         base_url=OLLAMA_BASE_URL,
         num_ctx=NUM_CTX,
     )
-    prompt = ChatPromptTemplate.from_template(prompt_template)
+    # Strict base instruction to prevent conversational text or titles
+    BASE_SYSTEM_INSTRUCTION = """
+You are an expert Terraform engineer.
+
+CRITICAL INSTRUCTION: You must output ONLY valid Terraform HCL wrapped in ```hcl``` blocks.
+DO NOT output any conversational text.
+DO NOT add titles like "Network Layer:" or "Data layer:".
+DO NOT add explanations.
+Your entire output must be parseable by the `terraform fmt` command.
+
+{mode_instructions}
+"""
+
+    full_prompt = BASE_SYSTEM_INSTRUCTION + "\n" + prompt_template
+    prompt = ChatPromptTemplate.from_template(full_prompt)
     chain = prompt | llm
     print(f"    [LLM] Sending request to local Ollama ({MODEL_NAME}) with num_ctx={NUM_CTX}...")
     response = chain.invoke(input_variables)
