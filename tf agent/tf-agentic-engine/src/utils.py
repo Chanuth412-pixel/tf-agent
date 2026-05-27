@@ -122,6 +122,7 @@ Your entire output must be parseable by the `terraform fmt` command.
         "Your entire output must be parseable by the `terraform fmt` command.\n\n"
         "CRITICAL VARIABLE RULE: DO NOT use any Terraform variables (e.g., var.vpc_cidr, var.environment) unless you explicitly declare them using a variable {{ }} block in your output. "
         "Hardcoding values is strongly preferred to ensure independent compilation.\n\n"
+        "CRITICAL DEPENDENCY RULE: Do NOT reference Terraform resource blocks that you did not define in your current response (e.g., do not use aws_subnet.private.id or aws_vpc.main.id if you didn't create them). Instead, you MUST use the exact hardcoded AWS IDs (e.g., \"vpc-12345\", \"subnet-67890\") provided in the input JSON data, or use data blocks to look them up.\n\n"
     )
 
     full_prompt = BASE_SYSTEM_INSTRUCTION + "\n" + prompt_template
