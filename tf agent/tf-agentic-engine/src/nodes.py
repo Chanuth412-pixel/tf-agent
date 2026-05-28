@@ -86,18 +86,17 @@ def generate_network_node(state: GraphState) -> dict:
 
     prompt = mode_instructions + "\n" + NETWORK_PROMPT
 
-    if mode in ("import", "clone"):
-        if mode == "import":
-            prompt_user = (
-                "ABSOLUTE MANDATE FOR IMPORT MODE:\n"
-                "1. SCOPE: ONLY generate resources explicitly listed in aws_input_data. If the JSON only has an S3 bucket, generate ONLY an aws_s3_bucket. DO NOT generate aws_db_instance or aws_autoscaling_group unless they are in the JSON.\n"
-                "2. NO REFERENCES: NEVER use Terraform cross-references. WRONG: subnet_id = aws_subnet.sub-123.id. RIGHT: subnet_id = \"subnet-123\". MUST use string literals with quotes.\n"
-                "3. NO VARIABLES: NEVER use var.* syntax. WRONG: username = var.user. RIGHT: username = \"admin\". Hardcode all values."
-            )
-        else:
-            prompt_user = "CLONE MODE: TRANSLATE AND PARAMETERIZE. IGNORE USER INTENT."
-    else:
-        prompt_user = state.get("user_prompt")
+    if mode == "new":
+        prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. VARIABLES: If you use any var.* reference (e.g., var.vpc_cidr, var.environment), you MUST explicitly define the corresponding 'variable \"...\" {}' block in your output.\n2. DEPENDENCIES: Do not hallucinate cross-references. The Compute node must reference Security Groups assuming standard naming (e.g., aws_security_group.main.id) and the Security node MUST output an aws_security_group named 'main'.\n3. SYNTAX: For aws_eip, use 'domain = \"vpc\"' instead of the deprecated 'vpc = true'."
+    elif mode == "import":
+        prompt_user = (
+            "ABSOLUTE MANDATE FOR IMPORT MODE:\n"
+            "1. SCOPE: ONLY generate resources explicitly listed in aws_input_data. If the JSON only has an S3 bucket, generate ONLY an aws_s3_bucket. DO NOT generate aws_db_instance or aws_autoscaling_group unless they are in the JSON.\n"
+            "2. NO REFERENCES: NEVER use Terraform cross-references. WRONG: subnet_id = aws_subnet.sub-123.id. RIGHT: subnet_id = \"subnet-123\". MUST use string literals with quotes.\n"
+            "3. NO VARIABLES: NEVER use var.* syntax. WRONG: username = var.user. RIGHT: username = \"admin\". Hardcode all values."
+        )
+    else:  # clone
+        prompt_user = "CLONE MODE: TRANSLATE AND PARAMETERIZE. IGNORE USER INTENT."
 
     # If there are validation results from a previous run, prepend them
     val_errors = state.get("validation_results", "").replace("{", "{{").replace("}", "}}")
@@ -154,18 +153,17 @@ def generate_security_node(state: GraphState) -> dict:
 
     prompt = mode_instructions + "\n" + SECURITY_PROMPT
 
-    if mode in ("import", "clone"):
-        if mode == "import":
-            prompt_user = (
-                "ABSOLUTE MANDATE FOR IMPORT MODE:\n"
-                "1. SCOPE: ONLY generate resources explicitly listed in aws_input_data. If the JSON only has an S3 bucket, generate ONLY an aws_s3_bucket. DO NOT generate aws_db_instance or aws_autoscaling_group unless they are in the JSON.\n"
-                "2. NO REFERENCES: NEVER use Terraform cross-references. WRONG: subnet_id = aws_subnet.sub-123.id. RIGHT: subnet_id = \"subnet-123\". MUST use string literals with quotes.\n"
-                "3. NO VARIABLES: NEVER use var.* syntax. WRONG: username = var.user. RIGHT: username = \"admin\". Hardcode all values."
-            )
-        else:
-            prompt_user = "CLONE MODE: TRANSLATE AND PARAMETERIZE. IGNORE USER INTENT."
-    else:
-        prompt_user = state.get("user_prompt")
+    if mode == "new":
+        prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. VARIABLES: If you use any var.* reference (e.g., var.vpc_cidr, var.environment), you MUST explicitly define the corresponding 'variable \"...\" {}' block in your output.\n2. DEPENDENCIES: Do not hallucinate cross-references. The Compute node must reference Security Groups assuming standard naming (e.g., aws_security_group.main.id) and the Security node MUST output an aws_security_group named 'main'.\n3. SYNTAX: For aws_eip, use 'domain = \"vpc\"' instead of the deprecated 'vpc = true'."
+    elif mode == "import":
+        prompt_user = (
+            "ABSOLUTE MANDATE FOR IMPORT MODE:\n"
+            "1. SCOPE: ONLY generate resources explicitly listed in aws_input_data. If the JSON only has an S3 bucket, generate ONLY an aws_s3_bucket. DO NOT generate aws_db_instance or aws_autoscaling_group unless they are in the JSON.\n"
+            "2. NO REFERENCES: NEVER use Terraform cross-references. WRONG: subnet_id = aws_subnet.sub-123.id. RIGHT: subnet_id = \"subnet-123\". MUST use string literals with quotes.\n"
+            "3. NO VARIABLES: NEVER use var.* syntax. WRONG: username = var.user. RIGHT: username = \"admin\". Hardcode all values."
+        )
+    else:  # clone
+        prompt_user = "CLONE MODE: TRANSLATE AND PARAMETERIZE. IGNORE USER INTENT."
 
     # If there are validation results from a previous run, prepend them
     val_errors = state.get("validation_results", "").replace("{", "{{").replace("}", "}}")
@@ -232,18 +230,17 @@ def generate_compute_node(state: GraphState) -> dict:
 
     prompt = mode_instructions + "\n" + COMPUTE_PROMPT
 
-    if mode in ("import", "clone"):
-        if mode == "import":
-            prompt_user = (
-                "ABSOLUTE MANDATE FOR IMPORT MODE:\n"
-                "1. SCOPE: ONLY generate resources explicitly listed in aws_input_data. If the JSON only has an S3 bucket, generate ONLY an aws_s3_bucket. DO NOT generate aws_db_instance or aws_autoscaling_group unless they are in the JSON.\n"
-                "2. NO REFERENCES: NEVER use Terraform cross-references. WRONG: subnet_id = aws_subnet.sub-123.id. RIGHT: subnet_id = \"subnet-123\". MUST use string literals with quotes.\n"
-                "3. NO VARIABLES: NEVER use var.* syntax. WRONG: username = var.user. RIGHT: username = \"admin\". Hardcode all values."
-            )
-        else:
-            prompt_user = "CLONE MODE: TRANSLATE AND PARAMETERIZE. IGNORE USER INTENT."
-    else:
-        prompt_user = state.get("user_prompt")
+    if mode == "new":
+        prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. VARIABLES: If you use any var.* reference (e.g., var.vpc_cidr, var.environment), you MUST explicitly define the corresponding 'variable \"...\" {}' block in your output.\n2. DEPENDENCIES: Do not hallucinate cross-references. The Compute node must reference Security Groups assuming standard naming (e.g., aws_security_group.main.id) and the Security node MUST output an aws_security_group named 'main'.\n3. SYNTAX: For aws_eip, use 'domain = \"vpc\"' instead of the deprecated 'vpc = true'."
+    elif mode == "import":
+        prompt_user = (
+            "ABSOLUTE MANDATE FOR IMPORT MODE:\n"
+            "1. SCOPE: ONLY generate resources explicitly listed in aws_input_data. If the JSON only has an S3 bucket, generate ONLY an aws_s3_bucket. DO NOT generate aws_db_instance or aws_autoscaling_group unless they are in the JSON.\n"
+            "2. NO REFERENCES: NEVER use Terraform cross-references. WRONG: subnet_id = aws_subnet.sub-123.id. RIGHT: subnet_id = \"subnet-123\". MUST use string literals with quotes.\n"
+            "3. NO VARIABLES: NEVER use var.* syntax. WRONG: username = var.user. RIGHT: username = \"admin\". Hardcode all values."
+        )
+    else:  # clone
+        prompt_user = "CLONE MODE: TRANSLATE AND PARAMETERIZE. IGNORE USER INTENT."
 
     # If there are validation results from a previous run, prepend them
     val_errors = state.get("validation_results", "").replace("{", "{{").replace("}", "}}")
@@ -315,18 +312,17 @@ def generate_data_node(state: GraphState) -> dict:
 
     prompt = mode_instructions + "\n" + DATA_PROMPT
 
-    if mode in ("import", "clone"):
-        if mode == "import":
-            prompt_user = (
-                "ABSOLUTE MANDATE FOR IMPORT MODE:\n"
-                "1. SCOPE: ONLY generate resources explicitly listed in aws_input_data. If the JSON only has an S3 bucket, generate ONLY an aws_s3_bucket. DO NOT generate aws_db_instance or aws_autoscaling_group unless they are in the JSON.\n"
-                "2. NO REFERENCES: NEVER use Terraform cross-references. WRONG: subnet_id = aws_subnet.sub-123.id. RIGHT: subnet_id = \"subnet-123\". MUST use string literals with quotes.\n"
-                "3. NO VARIABLES: NEVER use var.* syntax. WRONG: username = var.user. RIGHT: username = \"admin\". Hardcode all values."
-            )
-        else:
-            prompt_user = "CLONE MODE: TRANSLATE AND PARAMETERIZE. IGNORE USER INTENT."
-    else:
-        prompt_user = state.get("user_prompt")
+    if mode == "new":
+        prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. VARIABLES: If you use any var.* reference (e.g., var.vpc_cidr, var.environment), you MUST explicitly define the corresponding 'variable \"...\" {}' block in your output.\n2. DEPENDENCIES: Do not hallucinate cross-references. The Compute node must reference Security Groups assuming standard naming (e.g., aws_security_group.main.id) and the Security node MUST output an aws_security_group named 'main'.\n3. SYNTAX: For aws_eip, use 'domain = \"vpc\"' instead of the deprecated 'vpc = true'."
+    elif mode == "import":
+        prompt_user = (
+            "ABSOLUTE MANDATE FOR IMPORT MODE:\n"
+            "1. SCOPE: ONLY generate resources explicitly listed in aws_input_data. If the JSON only has an S3 bucket, generate ONLY an aws_s3_bucket. DO NOT generate aws_db_instance or aws_autoscaling_group unless they are in the JSON.\n"
+            "2. NO REFERENCES: NEVER use Terraform cross-references. WRONG: subnet_id = aws_subnet.sub-123.id. RIGHT: subnet_id = \"subnet-123\". MUST use string literals with quotes.\n"
+            "3. NO VARIABLES: NEVER use var.* syntax. WRONG: username = var.user. RIGHT: username = \"admin\". Hardcode all values."
+        )
+    else:  # clone
+        prompt_user = "CLONE MODE: TRANSLATE AND PARAMETERIZE. IGNORE USER INTENT."
 
     # If there are validation results from a previous run, prepend them
     val_errors = state.get("validation_results", "").replace("{", "{{").replace("}", "}}")
