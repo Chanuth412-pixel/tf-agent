@@ -87,7 +87,7 @@ def generate_network_node(state: GraphState) -> dict:
     prompt = mode_instructions + "\n" + NETWORK_PROMPT
 
     if mode == "new":
-        prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. VARIABLES: If you use any var.* reference (e.g., var.vpc_cidr, var.environment), you MUST explicitly define the corresponding 'variable \"...\" {}' block in your output.\n2. DEPENDENCIES: Do not hallucinate cross-references. The Compute node must reference Security Groups assuming standard naming (e.g., aws_security_group.main.id) and the Security node MUST output an aws_security_group named 'main'.\n3. SYNTAX: For aws_eip, use 'domain = \"vpc\"' instead of the deprecated 'vpc = true'."
+        prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. VARIABLES: You MUST hardcode values for Compute instance arguments. Use image_id = \"ami-0c55b159cbfafe1f0\" and instance_type = \"t3.micro\". DO NOT use var.ami or var.instance_type. If you use any other var.* reference, you MUST explicitly define the 'variable \"...\" {}' block in your output.\n2. DEPENDENCIES: Do not hallucinate cross-references. The Compute node must reference Security Groups assuming standard naming (e.g., aws_security_group.main.id) and the Security node MUST output an aws_security_group named 'main'.\n3. SYNTAX: For aws_eip, you MUST ONLY use 'domain = \"vpc\"'. You MUST COMPLETELY REMOVE 'vpc = true' from your code, as they conflict and crash Terraform."
     elif mode == "import":
         prompt_user = (
             "ABSOLUTE MANDATE FOR IMPORT MODE:\n"
@@ -154,7 +154,7 @@ def generate_security_node(state: GraphState) -> dict:
     prompt = mode_instructions + "\n" + SECURITY_PROMPT
 
     if mode == "new":
-        prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. VARIABLES: If you use any var.* reference (e.g., var.vpc_cidr, var.environment), you MUST explicitly define the corresponding 'variable \"...\" {}' block in your output.\n2. DEPENDENCIES: Do not hallucinate cross-references. The Compute node must reference Security Groups assuming standard naming (e.g., aws_security_group.main.id) and the Security node MUST output an aws_security_group named 'main'.\n3. SYNTAX: For aws_eip, use 'domain = \"vpc\"' instead of the deprecated 'vpc = true'."
+        prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. VARIABLES: You MUST hardcode values for Compute instance arguments. Use image_id = \"ami-0c55b159cbfafe1f0\" and instance_type = \"t3.micro\". DO NOT use var.ami or var.instance_type. If you use any other var.* reference, you MUST explicitly define the 'variable \"...\" {}' block in your output.\n2. DEPENDENCIES: Do not hallucinate cross-references. The Compute node must reference Security Groups assuming standard naming (e.g., aws_security_group.main.id) and the Security node MUST output an aws_security_group named 'main'.\n3. SYNTAX: For aws_eip, you MUST ONLY use 'domain = \"vpc\"'. You MUST COMPLETELY REMOVE 'vpc = true' from your code, as they conflict and crash Terraform."
     elif mode == "import":
         prompt_user = (
             "ABSOLUTE MANDATE FOR IMPORT MODE:\n"
@@ -231,7 +231,7 @@ def generate_compute_node(state: GraphState) -> dict:
     prompt = mode_instructions + "\n" + COMPUTE_PROMPT
 
     if mode == "new":
-        prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. VARIABLES: If you use any var.* reference (e.g., var.vpc_cidr, var.environment), you MUST explicitly define the corresponding 'variable \"...\" {}' block in your output.\n2. DEPENDENCIES: Do not hallucinate cross-references. The Compute node must reference Security Groups assuming standard naming (e.g., aws_security_group.main.id) and the Security node MUST output an aws_security_group named 'main'.\n3. SYNTAX: For aws_eip, use 'domain = \"vpc\"' instead of the deprecated 'vpc = true'."
+        prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. VARIABLES: You MUST hardcode values for Compute instance arguments. Use image_id = \"ami-0c55b159cbfafe1f0\" and instance_type = \"t3.micro\". DO NOT use var.ami or var.instance_type. If you use any other var.* reference, you MUST explicitly define the 'variable \"...\" {}' block in your output.\n2. DEPENDENCIES: Do not hallucinate cross-references. The Compute node must reference Security Groups assuming standard naming (e.g., aws_security_group.main.id) and the Security node MUST output an aws_security_group named 'main'.\n3. SYNTAX: For aws_eip, you MUST ONLY use 'domain = \"vpc\"'. You MUST COMPLETELY REMOVE 'vpc = true' from your code, as they conflict and crash Terraform."
     elif mode == "import":
         prompt_user = (
             "ABSOLUTE MANDATE FOR IMPORT MODE:\n"
@@ -313,7 +313,7 @@ def generate_data_node(state: GraphState) -> dict:
     prompt = mode_instructions + "\n" + DATA_PROMPT
 
     if mode == "new":
-        prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. VARIABLES: If you use any var.* reference (e.g., var.vpc_cidr, var.environment), you MUST explicitly define the corresponding 'variable \"...\" {}' block in your output.\n2. DEPENDENCIES: Do not hallucinate cross-references. The Compute node must reference Security Groups assuming standard naming (e.g., aws_security_group.main.id) and the Security node MUST output an aws_security_group named 'main'.\n3. SYNTAX: For aws_eip, use 'domain = \"vpc\"' instead of the deprecated 'vpc = true'."
+        prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. VARIABLES: You MUST hardcode values for Compute instance arguments. Use image_id = \"ami-0c55b159cbfafe1f0\" and instance_type = \"t3.micro\". DO NOT use var.ami or var.instance_type. If you use any other var.* reference, you MUST explicitly define the 'variable \"...\" {}' block in your output.\n2. DEPENDENCIES: Do not hallucinate cross-references. The Compute node must reference Security Groups assuming standard naming (e.g., aws_security_group.main.id) and the Security node MUST output an aws_security_group named 'main'.\n3. SYNTAX: For aws_eip, you MUST ONLY use 'domain = \"vpc\"'. You MUST COMPLETELY REMOVE 'vpc = true' from your code, as they conflict and crash Terraform."
     elif mode == "import":
         prompt_user = (
             "ABSOLUTE MANDATE FOR IMPORT MODE:\n"
