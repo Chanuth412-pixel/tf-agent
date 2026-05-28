@@ -96,16 +96,7 @@ def generate_network_node(state: GraphState) -> dict:
             "3. NO VARIABLES: NEVER use var.* syntax. WRONG: username = var.user. RIGHT: username = \"admin\". Hardcode all values."
         )
     else:  # clone
-        prompt_user = "ABSOLUTE MANDATE FOR CLONE MODE:\n1. PARAMETERIZATION: Replace hardcoded IDs and names from the aws_input_data JSON with var.* references.\n2. VARIABLE DECLARATION: You MUST explicitly output the 'variable \"...\" {}' declaration block for EVERY single var.* reference you generate (e.g., var.vpc_cidr, var.environment, var.owner, var.production_assets_2026_name). If you use a variable, you must declare it.\n3. SYNTAX: Do NOT generate 'aws_vpc_gateway_attachment' resources. Associate Internet Gateways directly by setting the 'vpc_id' argument inside the 'aws_internet_gateway' block."
-
-    # If there are validation results from a previous run, prepend them
-    val_errors = state.get("validation_results", "").replace("{", "{{").replace("}", "}}")
-    if val_errors:
-        prompt = val_errors + "\n" + prompt
-
-    hcl = call_cloud_llm(prompt, {"aws_input_data": state.get("aws_input_data"), "user_prompt": prompt_user})
-    parse_and_write_files(hcl, phase_filename="network.tf")
-    return {"network_hcl": hcl, "current_phase": "network"}
+        prompt_user = "ABSOLUTE MANDATE FOR CLONE MODE:\n1. PARAMETERIZATION: Replace hardcoded IDs and names from the aws_input_data JSON with var.* references.\n2. VARIABLE DECLARATION: You MUST explicitly output the 'variable \"...\" {}' declaration block for EVERY single var.* reference you generate (e.g., var.vpc_cidr, var.environment, var.owner, var.production_assets_2026_name). If you use a variable, you must declare it.\n3. SYNTAX: Do NOT generate 'aws_vpc_gateway_attachment' resources. Associate Internet Gateways directly by setting the 'vpc_id' argument inside the 'aws_internet_gateway' block.\n4. DOMAIN RESTRICTION: You are the NETWORK node. You MUST ONLY generate networking resources (VPCs, aws_subnet, IGWs, routing). Completely IGNORE any instances, security groups, or S3 buckets in the JSON."
 
 
 def generate_security_node(state: GraphState) -> dict:
@@ -163,7 +154,7 @@ def generate_security_node(state: GraphState) -> dict:
             "3. NO VARIABLES: NEVER use var.* syntax. WRONG: username = var.user. RIGHT: username = \"admin\". Hardcode all values."
         )
     else:  # clone
-        prompt_user = "ABSOLUTE MANDATE FOR CLONE MODE:\n1. PARAMETERIZATION: Replace hardcoded IDs and names from the aws_input_data JSON with var.* references.\n2. VARIABLE DECLARATION: You MUST explicitly output the 'variable \"...\" {}' declaration block for EVERY single var.* reference you generate (e.g., var.vpc_cidr, var.environment, var.owner, var.production_assets_2026_name). If you use a variable, you must declare it.\n3. SYNTAX: Do NOT generate 'aws_vpc_gateway_attachment' resources. Associate Internet Gateways directly by setting the 'vpc_id' argument inside the 'aws_internet_gateway' block."
+        prompt_user = "ABSOLUTE MANDATE FOR CLONE MODE:\n1. PARAMETERIZATION: Replace hardcoded IDs and names from the aws_input_data JSON with var.* references.\n2. VARIABLE DECLARATION: You MUST explicitly output the 'variable \"...\" {}' declaration block for EVERY single var.* reference you generate (e.g., var.vpc_cidr, var.environment, var.owner, var.production_assets_2026_name). If you use a variable, you must declare it.\n3. SYNTAX: Do NOT generate 'aws_vpc_gateway_attachment' resources. Associate Internet Gateways directly by setting the 'vpc_id' argument inside the 'aws_internet_gateway' block.\n4. DOMAIN RESTRICTION: You are the SECURITY node. You MUST ONLY generate security resources (aws_security_group, IAM). Completely IGNORE any subnets, instances, or S3 buckets in the JSON."
 
     # If there are validation results from a previous run, prepend them
     val_errors = state.get("validation_results", "").replace("{", "{{").replace("}", "}}")
@@ -240,7 +231,7 @@ def generate_compute_node(state: GraphState) -> dict:
             "3. NO VARIABLES: NEVER use var.* syntax. WRONG: username = var.user. RIGHT: username = \"admin\". Hardcode all values."
         )
     else:  # clone
-        prompt_user = "ABSOLUTE MANDATE FOR CLONE MODE:\n1. PARAMETERIZATION: Replace hardcoded IDs and names from the aws_input_data JSON with var.* references.\n2. VARIABLE DECLARATION: You MUST explicitly output the 'variable \"...\" {}' declaration block for EVERY single var.* reference you generate (e.g., var.vpc_cidr, var.environment, var.owner, var.production_assets_2026_name). If you use a variable, you must declare it.\n3. SYNTAX: Do NOT generate 'aws_vpc_gateway_attachment' resources. Associate Internet Gateways directly by setting the 'vpc_id' argument inside the 'aws_internet_gateway' block."
+        prompt_user = "ABSOLUTE MANDATE FOR CLONE MODE:\n1. PARAMETERIZATION: Replace hardcoded IDs and names from the aws_input_data JSON with var.* references.\n2. VARIABLE DECLARATION: You MUST explicitly output the 'variable \"...\" {}' declaration block for EVERY single var.* reference you generate (e.g., var.vpc_cidr, var.environment, var.owner, var.production_assets_2026_name). If you use a variable, you must declare it.\n3. SYNTAX: Do NOT generate 'aws_vpc_gateway_attachment' resources. Associate Internet Gateways directly by setting the 'vpc_id' argument inside the 'aws_internet_gateway' block.\n4. DOMAIN RESTRICTION: You are the COMPUTE node. You MUST ONLY generate compute resources (aws_instance, ASG, Launch Templates). Completely IGNORE any subnets, security groups, or S3 buckets in the JSON. NEVER generate aws_subnet."
 
     # If there are validation results from a previous run, prepend them
     val_errors = state.get("validation_results", "").replace("{", "{{").replace("}", "}}")
@@ -322,7 +313,7 @@ def generate_data_node(state: GraphState) -> dict:
             "3. NO VARIABLES: NEVER use var.* syntax. WRONG: username = var.user. RIGHT: username = \"admin\". Hardcode all values."
         )
     else:  # clone
-        prompt_user = "ABSOLUTE MANDATE FOR CLONE MODE:\n1. PARAMETERIZATION: Replace hardcoded IDs and names from the aws_input_data JSON with var.* references.\n2. VARIABLE DECLARATION: You MUST explicitly output the 'variable \"...\" {}' declaration block for EVERY single var.* reference you generate (e.g., var.vpc_cidr, var.environment, var.owner, var.production_assets_2026_name). If you use a variable, you must declare it.\n3. SYNTAX: Do NOT generate 'aws_vpc_gateway_attachment' resources. Associate Internet Gateways directly by setting the 'vpc_id' argument inside the 'aws_internet_gateway' block."
+        prompt_user = "ABSOLUTE MANDATE FOR CLONE MODE:\n1. PARAMETERIZATION: Replace hardcoded IDs and names from the aws_input_data JSON with var.* references.\n2. VARIABLE DECLARATION: You MUST explicitly output the 'variable \"...\" {}' declaration block for EVERY single var.* reference you generate (e.g., var.vpc_cidr, var.environment, var.owner, var.production_assets_2026_name). If you use a variable, you must declare it.\n3. SYNTAX: Do NOT generate 'aws_vpc_gateway_attachment' resources. Associate Internet Gateways directly by setting the 'vpc_id' argument inside the 'aws_internet_gateway' block.\n4. DOMAIN RESTRICTION: You are the DATA node. You MUST ONLY generate data/storage resources (aws_s3_bucket, RDS). Completely IGNORE any subnets, instances, or security groups in the JSON. NEVER generate aws_subnet or aws_security_group."
 
     # If there are validation results from a previous run, prepend them
     val_errors = state.get("validation_results", "").replace("{", "{{").replace("}", "}}")
