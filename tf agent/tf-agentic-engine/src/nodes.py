@@ -87,7 +87,7 @@ def generate_network_node(state: GraphState) -> dict:
     prompt = mode_instructions + "\n" + NETWORK_PROMPT
 
     if mode == "new":
-        prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. NO VARIABLES ALLOWED: You are strictly FORBIDDEN from using ANY var.* references. You MUST hardcode ALL values. Hardcode cidr_blocks (e.g., '10.0.0.0/16') and tags (e.g., Environment = 'production'). NEVER use var.vpc_cidr, var.environment, var.owner, var.ami, or var.instance_type.\n2. DEPENDENCIES: Do not hallucinate cross-references. Reference Security Groups using standard naming (e.g., aws_security_group.main.id) and ensure the Security node outputs 'main'.\n3. SYNTAX: For aws_eip, you MUST ONLY use 'domain = \"vpc\"'. You MUST COMPLETELY REMOVE 'vpc = true' from your code."
+        prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. NO VARIABLES ALLOWED: You are strictly FORBIDDEN from using ANY var.* references. You MUST hardcode ALL values. Hardcode cidr_blocks (e.g., '10.0.0.0/16') and tags (e.g., Environment = 'production'). NEVER use var.vpc_cidr, var.environment, var.owner, var.ami, or var.instance_type.\n2. DEPENDENCIES: Do not hallucinate cross-references. You MUST EXACTLY use 'aws_security_group.main.id' for all security group references in the Compute node. NEVER use names like 'eks_worker' or 'eks_cluster'. The Security node MUST explicitly define 'resource \"aws_security_group\" \"main\"'.\n3. SYNTAX: For aws_eip, you MUST ONLY use 'domain = \"vpc\"'. You MUST COMPLETELY REMOVE 'vpc = true' from your code."
     elif mode == "import":
         prompt_user = (
             "ABSOLUTE MANDATE FOR IMPORT MODE:\n"
@@ -154,7 +154,7 @@ def generate_security_node(state: GraphState) -> dict:
     prompt = mode_instructions + "\n" + SECURITY_PROMPT
 
     if mode == "new":
-        prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. NO VARIABLES ALLOWED: You are strictly FORBIDDEN from using ANY var.* references. You MUST hardcode ALL values. Hardcode cidr_blocks (e.g., '10.0.0.0/16') and tags (e.g., Environment = 'production'). NEVER use var.vpc_cidr, var.environment, var.owner, var.ami, or var.instance_type.\n2. DEPENDENCIES: Do not hallucinate cross-references. Reference Security Groups using standard naming (e.g., aws_security_group.main.id) and ensure the Security node outputs 'main'.\n3. SYNTAX: For aws_eip, you MUST ONLY use 'domain = \"vpc\"'. You MUST COMPLETELY REMOVE 'vpc = true' from your code."
+        prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. NO VARIABLES ALLOWED: You are strictly FORBIDDEN from using ANY var.* references. You MUST hardcode ALL values. Hardcode cidr_blocks (e.g., '10.0.0.0/16') and tags (e.g., Environment = 'production'). NEVER use var.vpc_cidr, var.environment, var.owner, var.ami, or var.instance_type.\n2. DEPENDENCIES: Do not hallucinate cross-references. You MUST EXACTLY use 'aws_security_group.main.id' for all security group references in the Compute node. NEVER use names like 'eks_worker' or 'eks_cluster'. The Security node MUST explicitly define 'resource \"aws_security_group\" \"main\"'.\n3. SYNTAX: For aws_eip, you MUST ONLY use 'domain = \"vpc\"'. You MUST COMPLETELY REMOVE 'vpc = true' from your code."
     elif mode == "import":
         prompt_user = (
             "ABSOLUTE MANDATE FOR IMPORT MODE:\n"
@@ -231,7 +231,7 @@ def generate_compute_node(state: GraphState) -> dict:
     prompt = mode_instructions + "\n" + COMPUTE_PROMPT
 
     if mode == "new":
-        prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. NO VARIABLES ALLOWED: You are strictly FORBIDDEN from using ANY var.* references. You MUST hardcode ALL values. Hardcode cidr_blocks (e.g., '10.0.0.0/16') and tags (e.g., Environment = 'production'). NEVER use var.vpc_cidr, var.environment, var.owner, var.ami, or var.instance_type.\n2. DEPENDENCIES: Do not hallucinate cross-references. Reference Security Groups using standard naming (e.g., aws_security_group.main.id) and ensure the Security node outputs 'main'.\n3. SYNTAX: For aws_eip, you MUST ONLY use 'domain = \"vpc\"'. You MUST COMPLETELY REMOVE 'vpc = true' from your code."
+        prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. NO VARIABLES ALLOWED: You are strictly FORBIDDEN from using ANY var.* references. You MUST hardcode ALL values. Hardcode cidr_blocks (e.g., '10.0.0.0/16') and tags (e.g., Environment = 'production'). NEVER use var.vpc_cidr, var.environment, var.owner, var.ami, or var.instance_type.\n2. DEPENDENCIES: Do not hallucinate cross-references. You MUST EXACTLY use 'aws_security_group.main.id' for all security group references in the Compute node. NEVER use names like 'eks_worker' or 'eks_cluster'. The Security node MUST explicitly define 'resource \"aws_security_group\" \"main\"'.\n3. SYNTAX: For aws_eip, you MUST ONLY use 'domain = \"vpc\"'. You MUST COMPLETELY REMOVE 'vpc = true' from your code."
     elif mode == "import":
         prompt_user = (
             "ABSOLUTE MANDATE FOR IMPORT MODE:\n"
@@ -313,7 +313,7 @@ def generate_data_node(state: GraphState) -> dict:
     prompt = mode_instructions + "\n" + DATA_PROMPT
 
     if mode == "new":
-        prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. NO VARIABLES ALLOWED: You are strictly FORBIDDEN from using ANY var.* references. You MUST hardcode ALL values. Hardcode cidr_blocks (e.g., '10.0.0.0/16') and tags (e.g., Environment = 'production'). NEVER use var.vpc_cidr, var.environment, var.owner, var.ami, or var.instance_type.\n2. DEPENDENCIES: Do not hallucinate cross-references. Reference Security Groups using standard naming (e.g., aws_security_group.main.id) and ensure the Security node outputs 'main'.\n3. SYNTAX: For aws_eip, you MUST ONLY use 'domain = \"vpc\"'. You MUST COMPLETELY REMOVE 'vpc = true' from your code."
+        prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. NO VARIABLES ALLOWED: You are strictly FORBIDDEN from using ANY var.* references. You MUST hardcode ALL values. Hardcode cidr_blocks (e.g., '10.0.0.0/16') and tags (e.g., Environment = 'production'). NEVER use var.vpc_cidr, var.environment, var.owner, var.ami, or var.instance_type.\n2. DEPENDENCIES: Do not hallucinate cross-references. You MUST EXACTLY use 'aws_security_group.main.id' for all security group references in the Compute node. NEVER use names like 'eks_worker' or 'eks_cluster'. The Security node MUST explicitly define 'resource \"aws_security_group\" \"main\"'.\n3. SYNTAX: For aws_eip, you MUST ONLY use 'domain = \"vpc\"'. You MUST COMPLETELY REMOVE 'vpc = true' from your code."
     elif mode == "import":
         prompt_user = (
             "ABSOLUTE MANDATE FOR IMPORT MODE:\n"
