@@ -67,37 +67,63 @@ def test_fetcher_locally():
     print("[Local Test] Simulating a complex AWS environment...")
     ec2 = boto3.client('ec2', region_name='us-east-1')
     s3 = boto3.client('s3', region_name='us-east-1')
+    rds = boto3.client('rds', region_name='us-east-1')
     
     # Create VPC
     vpc = ec2.create_vpc(CidrBlock='10.0.0.0/16')
     vpc_id = vpc['Vpc']['VpcId']
     
-    # Create Subnets
-    ec2.create_subnet(VpcId=vpc_id, CidrBlock='10.0.1.0/24', AvailabilityZone='us-east-1a')
-    subnet2 = ec2.create_subnet(VpcId=vpc_id, CidrBlock='10.0.2.0/24', AvailabilityZone='us-east-1b')
+    # Create multi-tier subnets
+    subnet_public_1a = ec2.create_subnet(VpcId=vpc_id, CidrBlock='10.0.1.0/24', AvailabilityZone='us-east-1a')
+    subnet_public_1b = ec2.create_subnet(VpcId=vpc_id, CidrBlock='10.0.2.0/24', AvailabilityZone='us-east-1b')
+    subnet_private_1a = ec2.create_subnet(VpcId=vpc_id, CidrBlock='10.0.3.0/24', AvailabilityZone='us-east-1a')
+    subnet_private_1b = ec2.create_subnet(VpcId=vpc_id, CidrBlock='10.0.4.0/24', AvailabilityZone='us-east-1b')
     
-    # Create Security Group
-    ec2.create_security_group(GroupName='web-tier-sg', Description='Web SG', VpcId=vpc_id)
+    # Create Security Groups
+    sg_web = ec2.create_security_group(GroupName='web-traffic-sg', Description='Web traffic SG', VpcId=vpc_id)
+    sg_db = ec2.create_security_group(GroupName='database-traffic-sg', Description='Database traffic SG', VpcId=vpc_id)
     
-    # Create EC2 Instance
+    # Create EC2 Instances
     ec2.run_instances(
         ImageId='ami-12c6146b', 
         MinCount=1, 
         MaxCount=1, 
-        InstanceType='t3.micro', 
-        SubnetId=subnet2['Subnet']['SubnetId']
+        InstanceType='t3.medium', 
+        SubnetId=subnet_public_1a['Subnet']['SubnetId']
+    )
+    ec2.run_instances(
+        ImageId='ami-12c6146b', 
+        MinCount=1, 
+        MaxCount=1, 
+        InstanceType='t3.medium', 
+        SubnetId=subnet_public_1b['Subnet']['SubnetId']
+    )
+    
+    # Create RDS Database Instance
+    rds.create_db_instance(
+        DBInstanceIdentifier='db-master',
+        DBInstanceClass='db.t3.micro',
+        Engine='postgres',
+        AllocatedStorage=20,
+        MasterUsername='admin',
+        MasterUserPassword='TempPassword123!',
+        DBSubnetGroupName='default'  # Using default subnet group for testing
     )
     
     # Create S3 Bucket
-    s3.create_bucket(Bucket='production-assets-2026')
+    s3.create_bucket(Bucket='enterprise-backup-vault-2026')
 
     print("[Local Test] Fetching data using your upgraded function...")
     import pprint
     data = fetch_live_infrastructure()
-    # Ensure the LLM has a deterministic Security Group ID to reference
-    # Add the exact mock SG dictionary requested by the user so import-mode prompts can use it
-    mock_sg = {'id': 'sg-0123456789abcdef0', 'type': 'aws_security_group', 'name': 'eks-cluster-sg'}
-    data.setdefault('resources', []).append(mock_sg)
+    # Add RDS instance to resources for expanded stress test
+    data['resources'].append({
+        "id": "db-master",
+        "instance_class": "db.t3.micro",
+        "engine": "postgres",
+        "allocated_storage": 20,
+        "type": "aws_db_instance"
+    })
     pprint.pprint(data)
     return data
 
