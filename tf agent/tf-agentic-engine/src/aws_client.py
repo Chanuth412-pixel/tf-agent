@@ -99,6 +99,16 @@ def test_fetcher_locally():
         SubnetId=subnet_public_1b['Subnet']['SubnetId']
     )
     
+    # Create DB Subnet Group for RDS
+    rds.create_db_subnet_group(
+        DBSubnetGroupName='default',
+        DBSubnetGroupDescription='Default DB Subnet Group for local testing',
+        SubnetIds=[
+            subnet_private_1a['Subnet']['SubnetId'],
+            subnet_private_1b['Subnet']['SubnetId']
+        ]
+    )
+    
     # Create RDS Database Instance
     rds.create_db_instance(
         DBInstanceIdentifier='db-master',
