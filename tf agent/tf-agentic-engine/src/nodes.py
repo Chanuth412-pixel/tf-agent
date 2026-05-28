@@ -67,10 +67,10 @@ def generate_network_node(state: GraphState) -> dict:
                 Do NOT generate or import Security Groups (aws_security_group) or IAM roles. Security Groups belong strictly to the SECURITY node.
                 Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
                 Example syntax:
-                import {{
+                import {{{{
                     to = aws_vpc.main
                     id = "vpc-12345"
-                }}
+                }}}}
                 If the aws_input_data contains no network resources, output exactly: # No network resources required.
                 """
     elif mode == "clone":
@@ -100,9 +100,9 @@ def generate_network_node(state: GraphState) -> dict:
         prompt_user = state.get("user_prompt")
 
     # If there are validation results from a previous run, prepend them
-    vr = state.get("validation_results", "")
-    if vr:
-        prompt = vr + "\n" + prompt
+    val_errors = state.get("validation_results", "").replace("{", "{{").replace("}", "}}")
+    if val_errors:
+        prompt = val_errors + "\n" + prompt
 
     hcl = call_cloud_llm(prompt, {"aws_input_data": state.get("aws_input_data"), "user_prompt": prompt_user})
     parse_and_write_files(hcl, phase_filename="network.tf")
@@ -137,10 +137,10 @@ def generate_security_node(state: GraphState) -> dict:
                 ONLY use the exact hardcoded AWS IDs provided in the input JSON data. IF an ID is missing, use a placeholder string.
                 Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
                 Example syntax:
-                import {{
+                import {{{{
                     to = aws_security_group.vpc_sg
                     id = "sg-12345"
-                }}
+                }}}}
                 If the aws_input_data contains no security resources, output exactly: # No security resources required.
                 """
     elif mode == "clone":
@@ -168,9 +168,9 @@ def generate_security_node(state: GraphState) -> dict:
         prompt_user = state.get("user_prompt")
 
     # If there are validation results from a previous run, prepend them
-    vr = state.get("validation_results", "")
-    if vr:
-        prompt = vr + "\n" + prompt
+    val_errors = state.get("validation_results", "").replace("{", "{{").replace("}", "}}")
+    if val_errors:
+        prompt = val_errors + "\n" + prompt
 
     hcl = call_cloud_llm(
         prompt,
@@ -215,10 +215,10 @@ def generate_compute_node(state: GraphState) -> dict:
                 ONLY use the exact hardcoded AWS IDs provided in the input JSON data. IF an ID is missing, use a placeholder string.
                 Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
                 Example syntax:
-                import {{
+                import {{{{
                     to = aws_instance.app
                     id = "i-0123456789abcdef0"
-                }}
+                }}}}
                 If the aws_input_data contains no compute resources, output exactly: # No compute resources required.
                 """
     elif mode == "clone":
@@ -246,9 +246,9 @@ def generate_compute_node(state: GraphState) -> dict:
         prompt_user = state.get("user_prompt")
 
     # If there are validation results from a previous run, prepend them
-    vr = state.get("validation_results", "")
-    if vr:
-        prompt = vr + "\n" + prompt
+    val_errors = state.get("validation_results", "").replace("{", "{{").replace("}", "}}")
+    if val_errors:
+        prompt = val_errors + "\n" + prompt
 
     hcl = call_cloud_llm(
         prompt,
@@ -298,10 +298,10 @@ def generate_data_node(state: GraphState) -> dict:
                 ONLY use the exact hardcoded AWS IDs provided in the input JSON data. IF an ID is missing, use a placeholder string.
                 Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
                 Example syntax:
-                import {{
+                import {{{{
                     to = aws_db_instance.main
                     id = "db-ABCDEFGHIJK"
-                }}
+                }}}}
                 If the aws_input_data contains no data resources, output exactly: # No data resources required.
                 """
     elif mode == "clone":
@@ -329,9 +329,9 @@ def generate_data_node(state: GraphState) -> dict:
         prompt_user = state.get("user_prompt")
 
     # If there are validation results from a previous run, prepend them
-    vr = state.get("validation_results", "")
-    if vr:
-        prompt = vr + "\n" + prompt
+    val_errors = state.get("validation_results", "").replace("{", "{{").replace("}", "}}")
+    if val_errors:
+        prompt = val_errors + "\n" + prompt
 
     hcl = call_cloud_llm(
         prompt,
