@@ -99,6 +99,11 @@ def generate_network_node(state: GraphState) -> dict:
     else:
         prompt_user = state.get("user_prompt")
 
+    # If there are validation results from a previous run, prepend them
+    vr = state.get("validation_results", "")
+    if vr:
+        prompt = vr + "\n" + prompt
+
     hcl = call_cloud_llm(prompt, {"aws_input_data": state.get("aws_input_data"), "user_prompt": prompt_user})
     parse_and_write_files(hcl, phase_filename="network.tf")
     return {"network_hcl": hcl, "current_phase": "network"}
@@ -161,6 +166,11 @@ def generate_security_node(state: GraphState) -> dict:
             prompt_user = "CLONE MODE: TRANSLATE AND PARAMETERIZE. IGNORE USER INTENT."
     else:
         prompt_user = state.get("user_prompt")
+
+    # If there are validation results from a previous run, prepend them
+    vr = state.get("validation_results", "")
+    if vr:
+        prompt = vr + "\n" + prompt
 
     hcl = call_cloud_llm(
         prompt,
@@ -234,6 +244,11 @@ def generate_compute_node(state: GraphState) -> dict:
             prompt_user = "CLONE MODE: TRANSLATE AND PARAMETERIZE. IGNORE USER INTENT."
     else:
         prompt_user = state.get("user_prompt")
+
+    # If there are validation results from a previous run, prepend them
+    vr = state.get("validation_results", "")
+    if vr:
+        prompt = vr + "\n" + prompt
 
     hcl = call_cloud_llm(
         prompt,
@@ -313,6 +328,11 @@ def generate_data_node(state: GraphState) -> dict:
     else:
         prompt_user = state.get("user_prompt")
 
+    # If there are validation results from a previous run, prepend them
+    vr = state.get("validation_results", "")
+    if vr:
+        prompt = vr + "\n" + prompt
+
     hcl = call_cloud_llm(
         prompt,
         {
@@ -358,6 +378,24 @@ def validation_node_func(state: GraphState) -> dict:
         else:
             # Fallback: include a textual representation if no explicit logs provided
             errors.append(str(validation_result))
+
+        # Build a single validation_results string that prepends the
+        # required CRITICAL instruction before the raw Terraform errors.
+        CRITICAL_RETRY_INSTRUCTION = (
+            "CRITICAL RETRY INSTRUCTION: The errors below occurred because you hallucinated resources not present in the aws_input_data JSON. "
+            "If Terraform reports missing variables or unsupported arguments for resources like aws_autoscaling_group, aws_db_instance, or aws_launch_template, "
+            "DO NOT attempt to fix them by adding variables or blocks. You MUST completely DELETE those resource blocks from your code. "
+            "Limit your output strictly to the resources provided in the JSON."
+        )
+
+        joined_errors = "\n".join(errors)
+        validation_results = CRITICAL_RETRY_INSTRUCTION + "\n\n" + joined_errors
+
         retry = state.get("retry_count", 0) + 1
         print(f"[Validator] Validation failed. Incrementing retry_count -> {retry}")
-        return {"is_valid": False, "error_logs": errors, "retry_count": retry}
+        return {
+            "is_valid": False,
+            "error_logs": errors,
+            "validation_results": validation_results,
+            "retry_count": retry,
+        }
