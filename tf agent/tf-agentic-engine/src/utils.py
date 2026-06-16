@@ -88,7 +88,7 @@ CRITICAL CONSTRAINT: Return ONLY valid, raw HCL structural syntax code blocks. D
 - For `aws_subnet`: Always use **`availability_zone`** (NEVER use `az`).
 - For `aws_autoscaling_group`:
   1. `vpc_zone_identifier` MUST be a list/set of strings (e.g., `["subnet-123"]`, not `"subnet-123"`).
-  2. NEVER use a `tags` block. You MUST define tags using individual `tag { key = "Environment" value = "production" propagate_at_launch = true }` blocks.
+  2. NEVER use a `tags` block. You MUST define tags using individual `tag {{ key = "Environment" value = "production" propagate_at_launch = true }}` blocks.
 - Do NOT add a `description` argument to resources unless it is explicitly supported by that resource type (e.g. `aws_security_group` supports it, but `aws_autoscaling_group` and `aws_subnet` do NOT).
 ========================================================================
 """
