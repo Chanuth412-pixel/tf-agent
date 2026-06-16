@@ -85,6 +85,9 @@ CRITICAL CONSTRAINT: Return ONLY valid, raw HCL structural syntax code blocks. D
 - DO NOT declare 'provider {{}}' or 'terraform {{}}' blocks. They live in provider.tf.
 - DO NOT re-declare or copy resource blocks from previous steps (e.g., Do NOT declare 'resource "aws_vpc" "main"' outside of the network phase).
 - Use exact AWS resource keys: Use 'ami' (NOT 'ami_id'), Use 'aws_db_instance' (NOT 'aws_rds_instance'), and do NOT place 'acl = "private"' inside aws_s3_bucket.
+- For `aws_autoscaling_group`:
+  1. `vpc_zone_identifier` MUST be a list/set of strings (e.g., `["subnet-123"]`, not `"subnet-123"`).
+  2. NEVER use a `tags` block. You MUST define tags using individual `tag { key = "Environment" value = "production" propagate_at_launch = true }` blocks.
 ========================================================================
 """
 

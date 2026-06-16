@@ -16,7 +16,7 @@ def main():
     if MODE in ["import", "clone"]:
         print(f"[Agent] Mode: {MODE}. Fetching existing AWS infrastructure...")
         # Use test_fetcher_locally() for safe RAM testing, or fetch_live_infrastructure() for production
-        aws_data = test_fetcher_locally() 
+        aws_data = fetch_live_infrastructure() 
     elif MODE == "new":
         print(f"[Agent] Mode: {MODE}. Bypassing AWS fetch. Using user prompt.")
     else:
