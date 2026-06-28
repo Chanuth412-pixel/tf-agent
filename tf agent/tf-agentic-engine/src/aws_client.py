@@ -42,7 +42,8 @@ def fetch_live_infrastructure(region_name=None):
                 "cidr_block": vpcs[0]['CidrBlock']
             })
             
-        subnets_resp = ec2.describe_subnets()
+        subnets_filter = [{'Name': 'vpc-id', 'Values': [vpc_id]}] if vpc_id else []
+        subnets_resp = ec2.describe_subnets(Filters=subnets_filter)
         for sn in subnets_resp.get('Subnets', []):
             resources.append({
                 "type": "aws_subnet",
@@ -52,8 +53,21 @@ def fetch_live_infrastructure(region_name=None):
                 "vpc_id": sn['VpcId']
             })
 
+        # Discover Internet Gateways attached to this VPC
+        if vpc_id:
+            try:
+                igw_resp = ec2.describe_internet_gateways(Filters=[{'Name': 'attachment.vpc-id', 'Values': [vpc_id]}])
+                for igw in igw_resp.get('InternetGateways', []):
+                    resources.append({
+                        "type": "aws_internet_gateway",
+                        "id": igw['InternetGatewayId']
+                    })
+            except Exception as igw_err:
+                logger.warning(f"Failed to fetch Internet Gateways: {str(igw_err)}")
+
         # --- SECURITY RESOURCES ---
-        sg_resp = ec2.describe_security_groups()
+        sg_filter = [{'Name': 'vpc-id', 'Values': [vpc_id]}] if vpc_id else []
+        sg_resp = ec2.describe_security_groups(Filters=sg_filter)
         for sg in sg_resp.get('SecurityGroups', []):
             if sg['GroupName'] != 'default': # Skip the default SG
                 resources.append({
@@ -78,7 +92,8 @@ def fetch_live_infrastructure(region_name=None):
             logger.warning(f"Failed to fetch IAM roles: {str(iam_err)}")
 
         # --- COMPUTE RESOURCES ---
-        instances_resp = ec2.describe_instances()
+        instances_filter = [{'Name': 'vpc-id', 'Values': [vpc_id]}] if vpc_id else []
+        instances_resp = ec2.describe_instances(Filters=instances_filter)
         for reservation in instances_resp.get('Reservations', []):
             for inst in reservation.get('Instances', []):
                 # Only grab instances that are actually running or stopped (not terminated)
@@ -144,11 +159,16 @@ def fetch_live_infrastructure(region_name=None):
         try:
             db_instances_resp = rds.describe_db_instances()
             for db in db_instances_resp.get('DBInstances', []):
+                # Filter to only fetch DB instances residing in the primary VPC
+                db_vpc_id = db.get('DBSubnetGroup', {}).get('VpcId')
+                if vpc_id and db_vpc_id != vpc_id:
+                    continue
                 resources.append({
                     "type": "aws_db_instance",
                     "id": db['DBInstanceIdentifier'],
                     "engine": db['Engine'],
-                    "instance_class": db['DBInstanceClass']
+                    "instance_class": db['DBInstanceClass'],
+                    "storage_encrypted": db.get('StorageEncrypted', False)
                 })
         except Exception as rds_err:
             logger.warning(f"Failed to fetch RDS DB instances: {str(rds_err)}")
