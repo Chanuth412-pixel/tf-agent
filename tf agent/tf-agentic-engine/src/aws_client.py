@@ -102,13 +102,19 @@ def fetch_live_infrastructure(region_name=None):
         try:
             asgs_resp = autoscaling.describe_auto_scaling_groups()
             for asg in asgs_resp.get('AutoScalingGroups', []):
-                resources.append({
+                asg_entry = {
                     "type": "aws_autoscaling_group",
                     "name": asg['AutoScalingGroupName'],
                     "min_size": asg['MinSize'],
                     "max_size": asg['MaxSize'],
                     "desired_capacity": asg['DesiredCapacity']
-                })
+                }
+                if asg.get('LaunchTemplate'):
+                    asg_entry['launch_template_name'] = asg['LaunchTemplate'].get('LaunchTemplateName')
+                    asg_entry['launch_template_id'] = asg['LaunchTemplate'].get('LaunchTemplateId')
+                elif asg.get('LaunchConfigurationName'):
+                    asg_entry['launch_configuration'] = asg['LaunchConfigurationName']
+                resources.append(asg_entry)
         except Exception as asg_err:
             logger.warning(f"Failed to fetch Auto Scaling Groups: {str(asg_err)}")
 
