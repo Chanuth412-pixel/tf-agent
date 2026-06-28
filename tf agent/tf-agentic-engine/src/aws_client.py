@@ -163,7 +163,7 @@ def fetch_live_infrastructure(region_name=None):
             resources.append({
                 "type": "aws_s3_bucket",
                 "id": bucket['Name'],
-                "name": bucket['Name'],
+                "bucket": bucket['Name'],
                 "tags": bucket_tags
             })
         
