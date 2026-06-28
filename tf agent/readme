@@ -1,9 +1,0 @@
-Install Dependencies : pip install -r requirements.txt
-
-Verify Ollama Status: ollama pull llama3.2
-
-Run the Pipeline: python engine/app.py
-
-New Run the Pipeline : python engine/graph_app.py
-
-Readability: python engine/graph_app.py --skip-validate
