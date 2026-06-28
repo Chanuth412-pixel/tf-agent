@@ -30,9 +30,9 @@ Name the VPC `aws_vpc.main` and subnets `aws_subnet.public_1` and
 `aws_subnet.private_1` so downstream phases can reference them.
 
 CRITICAL SYNTAX RULES:
-1. When defining route tables, use the exact singular block `route {...}` (do NOT use `routes`).
+1. When defining route tables, use the exact singular block `route {{{{...}}}}` (do NOT use `routes`).
 2. For public internet access routes, set the `cidr_block` explicitly to "0.0.0.0/0".
-3. Declare variables and locals only in `variables.tf` or inside a single `locals {...}` block — do NOT emit naked assignments at top-level.
+3. Declare variables and locals only in `variables.tf` or inside a single `locals {{{{...}}}}` block — do NOT emit naked assignments at top-level.
 4. Ensure resource names are stable and deterministic (e.g., `aws_vpc.main`, `aws_subnet.public_1`).
 """
 
@@ -47,7 +47,7 @@ attach the standard `tags` block using `var.environment` and `var.owner`.
 CRITICAL SYNTAX RULES:
 1. Do NOT redefine or redeclare the `resource "aws_vpc" "main"` block — it must exist only in `network.tf`.
 2. Always reference the VPC using the exact attribute `aws_vpc.main.id`.
-3. Do NOT emit naked top-level assignments; if local values are required wrap them inside `locals {...}`.
+3. Do NOT emit naked top-level assignments; if local values are required wrap them inside `locals {{{{...}}}}`.
 4. Avoid duplicating security group names between runs; use fixed resource addressing.
 """
 
