@@ -38,7 +38,8 @@ def fetch_live_infrastructure(region_name=None):
             # Put the VPC in resources
             resources.append({
                 "type": "aws_vpc",
-                "id": vpc_id
+                "id": vpc_id,
+                "cidr_block": vpcs[0]['CidrBlock']
             })
             
         subnets_resp = ec2.describe_subnets()

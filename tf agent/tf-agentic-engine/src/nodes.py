@@ -163,11 +163,12 @@ def generate_security_node(state: GraphState) -> dict:
                 EXAMPLE WRONG: Environment = var.environment  EXAMPLE RIGHT: Environment = "production"
                 ONLY use the exact hardcoded AWS IDs provided in the input JSON data. IF an ID is missing, use a placeholder string.
                 Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
+                CRITICAL: For aws_iam_role, the import `id` MUST be the Role Name (e.g., "my-role-name"), NOT the full ARN.
                 Example syntax:
-                import {{{{
+                import {{
                     to = aws_security_group.vpc_sg
                     id = "sg-12345"
-                }}}}
+                }}
                 If the aws_input_data contains no security resources, output exactly: # No security resources required.
                 """
     elif mode == "clone":
@@ -252,10 +253,10 @@ def generate_compute_node(state: GraphState) -> dict:
                 ONLY use the exact hardcoded AWS IDs provided in the input JSON data. IF an ID is missing, use a placeholder string.
                 Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
                 Example syntax:
-                import {{{{
+                import {{
                     to = aws_instance.app
                     id = "i-0123456789abcdef0"
-                }}}}
+                }}
                 If the aws_input_data contains no compute resources, output exactly: # No compute resources required.
                 """
     elif mode == "clone":
@@ -345,10 +346,10 @@ def generate_data_node(state: GraphState) -> dict:
                 ONLY use the exact hardcoded AWS IDs provided in the input JSON data. IF an ID is missing, use a placeholder string.
                 Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
                 Example syntax:
-                import {{{{
+                import {{
                     to = aws_db_instance.main
                     id = "db-ABCDEFGHIJK"
-                }}}}
+                }}
                 If the aws_input_data contains no data resources, output exactly: # No data resources required.
                 """
     elif mode == "clone":
