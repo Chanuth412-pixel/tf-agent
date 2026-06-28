@@ -1,3 +1,4 @@
+import os
 import boto3
 import json
 import logging
@@ -5,11 +6,16 @@ from moto import mock_aws
 
 logger = logging.getLogger(__name__)
 
-def fetch_live_infrastructure(region_name='us-east-1'):
+def fetch_live_infrastructure(region_name=None):
     """
     Connects to AWS to read a complex, real-world infrastructure state.
     Fetches Network, Security, Compute, and Data resources to populate the Agentic Engine.
     """
+    if not region_name:
+        # Dynamically detect region from environment variables or active AWS CLI configuration
+        session = boto3.Session()
+        region_name = session.region_name or os.environ.get("AWS_DEFAULT_REGION") or os.environ.get("AWS_REGION") or "us-east-1"
+
     logger.info(f"Scanning AWS account in region {region_name}...")
     
     # 1. Initialize all necessary boto3 clients
@@ -211,7 +217,7 @@ def test_fetcher_locally():
     s3.create_bucket(Bucket='enterprise-backup-vault-2026')
 
     print("[Local Test] Fetching data using your upgraded function...")
-    data = fetch_live_infrastructure()
+    data = fetch_live_infrastructure(region_name='us-east-1')
     # Add RDS instance to resources for expanded stress test
     data['resources'].append({
         "id": "db-master",
