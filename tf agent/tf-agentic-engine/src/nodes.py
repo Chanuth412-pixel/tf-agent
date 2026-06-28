@@ -74,7 +74,8 @@ def generate_network_node(state: GraphState) -> dict:
                 NEVER use `var.*` references. EXAMPLE WRONG: image_id = var.ami_id  EXAMPLE RIGHT: image_id = "ami-0c55b159cbfafe1f0"
                 EXAMPLE WRONG: instance_type = var.instance_type  EXAMPLE RIGHT: instance_type = "t3.micro"
                 EXAMPLE WRONG: Environment = var.environment  EXAMPLE RIGHT: Environment = "production"
-                ONLY use the exact hardcoded AWS IDs provided in the input JSON data (e.g., "vpc-12345", "subnet-67890"). IF an ID is missing, use a placeholder string (e.g., "subnet-000000").
+                ONLY use the exact hardcoded AWS IDs provided in the input JSON data (e.g., "vpc-12345", "subnet-67890"). If a resource is listed in the JSON but its ID is missing, use a placeholder.
+                STRICT SCOPE: You MUST ONLY generate resources that are explicitly present in the `aws_input_data`. If `aws_internet_gateway` is NOT present in the input JSON resources list, do NOT generate any `aws_internet_gateway` resource or any `import` block for it. Similarly, if only one subnet is present in the telemetry, do NOT generate a second subnet or any placeholders for it.
                 Do NOT generate or import Security Groups (aws_security_group) or IAM roles. Security Groups belong strictly to the SECURITY node.
                 Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
                 Example syntax:

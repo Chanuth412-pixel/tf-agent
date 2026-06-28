@@ -56,12 +56,14 @@ def fetch_live_infrastructure(region_name=None):
         # Discover Internet Gateways attached to this VPC
         if vpc_id:
             try:
-                igw_resp = ec2.describe_internet_gateways(Filters=[{'Name': 'attachment.vpc-id', 'Values': [vpc_id]}])
+                igw_resp = ec2.describe_internet_gateways()
                 for igw in igw_resp.get('InternetGateways', []):
-                    resources.append({
-                        "type": "aws_internet_gateway",
-                        "id": igw['InternetGatewayId']
-                    })
+                    for attachment in igw.get('Attachments', []):
+                        if attachment.get('VpcId') == vpc_id:
+                            resources.append({
+                                "type": "aws_internet_gateway",
+                                "id": igw['InternetGatewayId']
+                            })
             except Exception as igw_err:
                 logger.warning(f"Failed to fetch Internet Gateways: {str(igw_err)}")
 
