@@ -29,6 +29,11 @@ def fetch_live_infrastructure(region_name=None):
     resources = []
     vpc_id = None
 
+    def get_tags_dict(aws_tags):
+        if not aws_tags:
+            return {}
+        return {t['Key']: t['Value'] for t in aws_tags if 'Key' in t}
+
     try:
         # --- NETWORK RESOURCES ---
         vpcs_response = ec2.describe_vpcs()
@@ -39,7 +44,8 @@ def fetch_live_infrastructure(region_name=None):
             resources.append({
                 "type": "aws_vpc",
                 "id": vpc_id,
-                "cidr_block": vpcs[0]['CidrBlock']
+                "cidr_block": vpcs[0]['CidrBlock'],
+                "tags": get_tags_dict(vpcs[0].get('Tags', []))
             })
             
         subnets_filter = [{'Name': 'vpc-id', 'Values': [vpc_id]}] if vpc_id else []
@@ -50,7 +56,8 @@ def fetch_live_infrastructure(region_name=None):
                 "id": sn['SubnetId'],
                 "cidr_block": sn['CidrBlock'],
                 "az": sn['AvailabilityZone'],
-                "vpc_id": sn['VpcId']
+                "vpc_id": sn['VpcId'],
+                "tags": get_tags_dict(sn.get('Tags', []))
             })
 
         # Discover Internet Gateways attached to this VPC
@@ -62,7 +69,8 @@ def fetch_live_infrastructure(region_name=None):
                         if attachment.get('VpcId') == vpc_id:
                             resources.append({
                                 "type": "aws_internet_gateway",
-                                "id": igw['InternetGatewayId']
+                                "id": igw['InternetGatewayId'],
+                                "tags": get_tags_dict(igw.get('Tags', []))
                             })
             except Exception as igw_err:
                 logger.warning(f"Failed to fetch Internet Gateways: {str(igw_err)}")
@@ -76,7 +84,9 @@ def fetch_live_infrastructure(region_name=None):
                     "type": "aws_security_group",
                     "id": sg['GroupId'],
                     "name": sg['GroupName'],
-                    "vpc_id": sg['VpcId']
+                    "vpc_id": sg['VpcId'],
+                    "description": sg.get('Description', ''),
+                    "tags": get_tags_dict(sg.get('Tags', []))
                 })
         
         try:
@@ -88,7 +98,8 @@ def fetch_live_infrastructure(region_name=None):
                         "type": "aws_iam_role",
                         "id": role['RoleName'],
                         "name": role['RoleName'],
-                        "arn": role['Arn']
+                        "arn": role['Arn'],
+                        "description": role.get('Description', '')
                     })
         except Exception as iam_err:
             logger.warning(f"Failed to fetch IAM roles: {str(iam_err)}")
@@ -104,7 +115,8 @@ def fetch_live_infrastructure(region_name=None):
                         "type": "aws_instance",
                         "id": inst['InstanceId'],
                         "instance_type": inst['InstanceType'],
-                        "subnet_id": inst.get('SubnetId', 'Unknown')
+                        "subnet_id": inst.get('SubnetId', 'Unknown'),
+                        "tags": get_tags_dict(inst.get('Tags', []))
                     })
                 
         try:
@@ -113,7 +125,8 @@ def fetch_live_infrastructure(region_name=None):
                 resources.append({
                     "type": "aws_launch_template",
                     "id": lt['LaunchTemplateId'],
-                    "name": lt['LaunchTemplateName']
+                    "name": lt['LaunchTemplateName'],
+                    "tags": get_tags_dict(lt.get('Tags', []))
                 })
         except Exception as lt_err:
             logger.warning(f"Failed to fetch Launch Templates: {str(lt_err)}")
@@ -127,7 +140,8 @@ def fetch_live_infrastructure(region_name=None):
                     "name": asg['AutoScalingGroupName'],
                     "min_size": asg['MinSize'],
                     "max_size": asg['MaxSize'],
-                    "desired_capacity": asg['DesiredCapacity']
+                    "desired_capacity": asg['DesiredCapacity'],
+                    "tags": get_tags_dict(asg.get('Tags', []))
                 }
                 if asg.get('LaunchTemplate'):
                     asg_entry['launch_template_name'] = asg['LaunchTemplate'].get('LaunchTemplateName')
@@ -141,10 +155,16 @@ def fetch_live_infrastructure(region_name=None):
         # --- DATA RESOURCES ---
         buckets_response = s3.list_buckets()
         for bucket in buckets_response.get('Buckets', []):
+            try:
+                tagging = s3.get_bucket_tagging(Bucket=bucket['Name'])
+                bucket_tags = get_tags_dict(tagging.get('TagSet', []))
+            except Exception:
+                bucket_tags = {}
             resources.append({
                 "type": "aws_s3_bucket",
                 "id": bucket['Name'],
-                "name": bucket['Name']
+                "name": bucket['Name'],
+                "tags": bucket_tags
             })
         
         try:
@@ -170,7 +190,8 @@ def fetch_live_infrastructure(region_name=None):
                     "id": db['DBInstanceIdentifier'],
                     "engine": db['Engine'],
                     "instance_class": db['DBInstanceClass'],
-                    "storage_encrypted": db.get('StorageEncrypted', False)
+                    "storage_encrypted": db.get('StorageEncrypted', False),
+                    "tags": get_tags_dict(db.get('TagList', []))
                 })
         except Exception as rds_err:
             logger.warning(f"Failed to fetch RDS DB instances: {str(rds_err)}")
