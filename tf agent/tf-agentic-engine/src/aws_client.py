@@ -122,12 +122,27 @@ def fetch_live_infrastructure(region_name=None):
         try:
             lts_resp = ec2.describe_launch_templates()
             for lt in lts_resp.get('LaunchTemplates', []):
-                resources.append({
+                lt_entry = {
                     "type": "aws_launch_template",
                     "id": lt['LaunchTemplateId'],
                     "name": lt['LaunchTemplateName'],
                     "tags": get_tags_dict(lt.get('Tags', []))
-                })
+                }
+                try:
+                    versions_resp = ec2.describe_launch_template_versions(
+                        LaunchTemplateId=lt['LaunchTemplateId'],
+                        Versions=['$Default']
+                    )
+                    versions = versions_resp.get('LaunchTemplateVersions', [])
+                    if versions:
+                        lt_data = versions[0].get('LaunchTemplateData', {})
+                        if lt_data.get('ImageId'):
+                            lt_entry['image_id'] = lt_data['ImageId']
+                        if lt_data.get('InstanceType'):
+                            lt_entry['instance_type'] = lt_data['InstanceType']
+                except Exception as lt_ver_err:
+                    logger.warning(f"Failed to fetch Launch Template version details: {str(lt_ver_err)}")
+                resources.append(lt_entry)
         except Exception as lt_err:
             logger.warning(f"Failed to fetch Launch Templates: {str(lt_err)}")
         
