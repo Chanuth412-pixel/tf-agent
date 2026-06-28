@@ -34,6 +34,27 @@ def fetch_live_infrastructure(region_name=None):
             return {}
         return {t['Key']: t['Value'] for t in aws_tags if 'Key' in t}
 
+    def parse_ip_permissions(permissions):
+        rules = []
+        for perm in permissions:
+            from_port = perm.get('FromPort', -1)
+            to_port = perm.get('ToPort', -1)
+            protocol = perm.get('IpProtocol', '-1')
+            
+            cidr_blocks = [ip_range['CidrIp'] for ip_range in perm.get('IpRanges', [])]
+            ipv6_cidr_blocks = [ip_range['CidrIpv6'] for ip_range in perm.get('Ipv6Ranges', [])]
+            security_groups = [group['GroupId'] for group in perm.get('UserIdGroupPairs', [])]
+            
+            rules.append({
+                "from_port": from_port,
+                "to_port": to_port,
+                "protocol": protocol,
+                "cidr_blocks": cidr_blocks,
+                "ipv6_cidr_blocks": ipv6_cidr_blocks,
+                "security_groups": security_groups
+            })
+        return rules
+
     try:
         # --- NETWORK RESOURCES ---
         vpcs_response = ec2.describe_vpcs()
@@ -86,6 +107,8 @@ def fetch_live_infrastructure(region_name=None):
                     "name": sg['GroupName'],
                     "vpc_id": sg['VpcId'],
                     "description": sg.get('Description', ''),
+                    "ingress": parse_ip_permissions(sg.get('IpPermissions', [])),
+                    "egress": parse_ip_permissions(sg.get('IpPermissionsEgress', [])),
                     "tags": get_tags_dict(sg.get('Tags', []))
                 })
         
@@ -140,6 +163,24 @@ def fetch_live_infrastructure(region_name=None):
                             lt_entry['image_id'] = lt_data['ImageId']
                         if lt_data.get('InstanceType'):
                             lt_entry['instance_type'] = lt_data['InstanceType']
+                        if lt_data.get('UserData'):
+                            lt_entry['user_data'] = lt_data['UserData']
+                        if lt_data.get('IamInstanceProfile'):
+                            profile = lt_data['IamInstanceProfile']
+                            lt_entry['iam_instance_profile'] = profile.get('Arn') or profile.get('Name')
+                        if lt_data.get('BlockDeviceMappings'):
+                            lt_entry['block_device_mappings'] = [
+                                {
+                                    "device_name": bdm.get('DeviceName'),
+                                    "ebs": {
+                                        "volume_size": bdm.get('Ebs', {}).get('VolumeSize'),
+                                        "volume_type": bdm.get('Ebs', {}).get('VolumeType'),
+                                        "encrypted": bdm.get('Ebs', {}).get('Encrypted')
+                                    }
+                                }
+                                for bdm in lt_data['BlockDeviceMappings']
+                                if bdm.get('Ebs')
+                            ]
                 except Exception as lt_ver_err:
                     logger.warning(f"Failed to fetch Launch Template version details: {str(lt_ver_err)}")
                 resources.append(lt_entry)
@@ -175,21 +216,77 @@ def fetch_live_infrastructure(region_name=None):
                 bucket_tags = get_tags_dict(tagging.get('TagSet', []))
             except Exception:
                 bucket_tags = {}
+
+            try:
+                ver = s3.get_bucket_versioning(Bucket=bucket['Name'])
+                bucket_versioning = {"status": ver.get('Status', 'Disabled')}
+            except Exception:
+                bucket_versioning = {}
+
+            try:
+                enc = s3.get_bucket_encryption(Bucket=bucket['Name'])
+                rules = enc.get('ServerSideEncryptionConfiguration', {}).get('Rules', [])
+                if rules:
+                    encryption_algorithm = rules[0].get('ApplyServerSideEncryptionByDefault', {}).get('SSEAlgorithm')
+                    bucket_encryption = {"sse_algorithm": encryption_algorithm}
+                else:
+                    bucket_encryption = {}
+            except Exception:
+                bucket_encryption = {}
+
             resources.append({
                 "type": "aws_s3_bucket",
                 "id": bucket['Name'],
                 "bucket": bucket['Name'],
-                "tags": bucket_tags
+                "tags": bucket_tags,
+                "server_side_encryption": bucket_encryption,
+                "versioning": bucket_versioning
             })
         
         try:
             tables_resp = dynamodb.list_tables()
             for table_name in tables_resp.get('TableNames', []):
-                resources.append({
-                    "type": "aws_dynamodb_table",
-                    "id": table_name,
-                    "name": table_name
-                })
+                try:
+                    desc_resp = dynamodb.describe_table(TableName=table_name)
+                    table_desc = desc_resp.get('Table', {})
+                    hash_key = ""
+                    range_key = ""
+                    for key in table_desc.get('KeySchema', []):
+                        if key['KeyType'] == 'HASH':
+                            hash_key = key['AttributeName']
+                        elif key['KeyType'] == 'RANGE':
+                            range_key = key['AttributeName']
+                            
+                    attr_defs = [
+                        {
+                            "name": attr['AttributeName'],
+                            "type": attr['AttributeType']
+                        }
+                        for attr in table_desc.get('AttributeDefinitions', [])
+                    ]
+                    
+                    try:
+                        table_tags_resp = dynamodb.list_tags_of_resource(ResourceArn=table_desc['TableArn'])
+                        table_tags = get_tags_dict(table_tags_resp.get('Tags', []))
+                    except Exception:
+                        table_tags = {}
+
+                    resources.append({
+                        "type": "aws_dynamodb_table",
+                        "id": table_name,
+                        "name": table_name,
+                        "hash_key": hash_key,
+                        "range_key": range_key,
+                        "attribute_definitions": attr_defs,
+                        "tags": table_tags
+                    })
+                except Exception as tbl_err:
+                    logger.warning(f"Failed to describe DynamoDB table {table_name}: {str(tbl_err)}")
+                    resources.append({
+                        "type": "aws_dynamodb_table",
+                        "id": table_name,
+                        "name": table_name
+                    })
         except Exception as db_err:
             logger.warning(f"Failed to fetch DynamoDB tables: {str(db_err)}")
         
