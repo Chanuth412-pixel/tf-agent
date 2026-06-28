@@ -89,7 +89,7 @@ CRITICAL CONSTRAINT: Return ONLY valid, raw HCL structural syntax code blocks. D
 - For `aws_autoscaling_group`:
   1. `vpc_zone_identifier` MUST be a list/set of strings (e.g., `["subnet-123"]`, not `"subnet-123"`).
   2. NEVER use a `tags` block. You MUST define tags using individual `tag {{ key = "Environment" value = "production" propagate_at_launch = true }}` blocks.
-  3. You MUST always specify one of `launch_configuration`, `launch_template`, or `mixed_instances_policy` (e.g., `launch_template { id = "..." }`). If none is specified in the telemetry, reference a placeholder launch template block.
+  3. You MUST always specify one of `launch_configuration`, `launch_template`, or `mixed_instances_policy` (e.g., `launch_template {{ id = "..." }}`). If none is specified in the telemetry, reference a placeholder launch template block.
 - For `aws_dynamodb_table`:
   1. If `read_capacity_units` and `write_capacity_units` are specified, you MUST explicitly set `billing_mode = "PROVISIONED"`.
   2. If `billing_mode` is set to `"PAY_PER_REQUEST"`, you MUST NOT specify `read_capacity_units` or `write_capacity_units`.
