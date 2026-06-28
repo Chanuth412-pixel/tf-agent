@@ -74,7 +74,8 @@ def generate_network_node(state: GraphState) -> dict:
                 NEVER use `var.*` references. EXAMPLE WRONG: image_id = var.ami_id  EXAMPLE RIGHT: image_id = "ami-0c55b159cbfafe1f0"
                 EXAMPLE WRONG: instance_type = var.instance_type  EXAMPLE RIGHT: instance_type = "t3.micro"
                 EXAMPLE WRONG: Environment = var.environment  EXAMPLE RIGHT: Environment = "production"
-                ONLY use the exact hardcoded AWS IDs provided in the input JSON data (e.g., "vpc-12345", "subnet-67890"). IF an ID is missing, use a placeholder string (e.g., "subnet-000000").
+                ONLY use the exact hardcoded AWS IDs provided in the input JSON data (e.g., "vpc-12345", "subnet-67890"). If a resource is listed in the JSON but its ID is missing, use a placeholder.
+                STRICT SCOPE: You MUST ONLY generate resources that are explicitly present in the `aws_input_data`. If `aws_internet_gateway` is NOT present in the input JSON resources list, do NOT generate any `aws_internet_gateway` resource or any `import` block for it. Similarly, if only one subnet is present in the telemetry, do NOT generate a second subnet or any placeholders for it.
                 Do NOT generate or import Security Groups (aws_security_group) or IAM roles. Security Groups belong strictly to the SECURITY node.
                 Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
                 Example syntax:
@@ -98,13 +99,14 @@ def generate_network_node(state: GraphState) -> dict:
     prompt = mode_instructions + "\n" + NETWORK_PROMPT
 
     if mode == "new":
-        prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. NO VARIABLES ALLOWED: You are strictly FORBIDDEN from using ANY var.* references. You MUST hardcode ALL values. Hardcode cidr_blocks (e.g., '10.0.0.0/16') and tags (e.g., Environment = 'production').\n2. DEPENDENCIES & NAMING: You must strictly align resource names across files. The Network node MUST declare the VPC as 'resource \"aws_vpc\" \"main\"'. The Security node MUST declare the security group as 'resource \"aws_security_group\" \"main\"'. All cross-references must use 'aws_vpc.main.id' and 'aws_security_group.main.id'.\n3. BLOCK SYNTAX: Never use equals signs for repeatable configuration sub-blocks. Use 'attribute { ... }' instead of 'attribute = [ ... ]', and 'ingress { ... }' instead of 'ingress = [ ... ]'.\n4. DYNAMODB SYNTAX: If you generate an aws_dynamodb_table, you must define the 'hash_key'. If you specify 'read_capacity_units' and 'write_capacity_units', you MUST explicitly set 'billing_mode = \"PROVISIONED\"'.\n5. AWS_EIP SYNTAX: For aws_eip, you MUST ONLY use 'domain = \"vpc\"'. Completely remove 'vpc = true'."
+        prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. NO VARIABLES ALLOWED: You are strictly FORBIDDEN from using ANY var.* references. You MUST hardcode ALL values. Hardcode cidr_blocks (e.g., '10.0.0.0/16') and tags (e.g., Environment = 'production').\n2. DEPENDENCIES & NAMING: You must strictly align resource names across files. The Network node MUST declare the VPC as 'resource \"aws_vpc\" \"main\"'. The Security node MUST declare the security group as 'resource \"aws_security_group\" \"main\"'. All cross-references must use 'aws_vpc.main.id' and 'aws_security_group.main.id'.\n3. BLOCK SYNTAX: Never use equals signs for repeatable configuration sub-blocks. Use 'attribute { ... }' instead of 'attribute = [ ... ]', and 'ingress { ... }' instead of 'ingress = [ ... ]'.\n4. DYNAMODB SYNTAX: If you generate an aws_dynamodb_table, you must define the 'hash_key'. You MUST set 'billing_mode = \"PAY_PER_REQUEST\"'. Do NOT specify 'read_capacity_units' or 'write_capacity_units'.\n5. AWS_EIP SYNTAX: For aws_eip, you MUST ONLY use 'domain = \"vpc\"'. Completely remove 'vpc = true'."
     elif mode == "import":
         prompt_user = (
             "ABSOLUTE MANDATE FOR IMPORT MODE:\n"
             "1. SCOPE: ONLY generate resources explicitly listed in aws_input_data. If the JSON only has an S3 bucket, generate ONLY an aws_s3_bucket. DO NOT generate aws_db_instance or aws_autoscaling_group unless they are in the JSON.\n"
             "2. NO REFERENCES: NEVER use Terraform cross-references. WRONG: subnet_id = aws_subnet.sub-123.id. RIGHT: subnet_id = \"subnet-123\". MUST use string literals with quotes.\n"
-            "3. NO VARIABLES: NEVER use var.* syntax. WRONG: username = var.user. RIGHT: username = \"admin\". Hardcode all values."
+            "3. NO VARIABLES: NEVER use var.* syntax. WRONG: username = var.user. RIGHT: username = \"admin\". Hardcode all values.\n"
+            "4. DYNAMODB: If you generate an aws_dynamodb_table, you MUST set billing_mode = \"PAY_PER_REQUEST\" and you are strictly FORBIDDEN from specifying read_capacity_units or write_capacity_units."
         )
     else:  # clone
         prompt_user = "ABSOLUTE MANDATE FOR CLONE MODE:\n1. PARAMETERIZATION: Replace hardcoded IDs and names from the aws_input_data JSON with var.* references.\n2. VARIABLE DECLARATION: You MUST explicitly output a 'variable \"...\" {}' block for EVERY var.* reference you generate. Write these variable blocks AT THE VERY TOP of your output, inside the exact same HCL block as your resources. DO NOT omit them thinking they belong in a separate variables.tf file. YOU MUST WRITE THEM HERE.\nEXAMPLE REQUIRED OUTPUT:\nvariable \"vpc_cidr\" {}\nresource \"aws_vpc\" \"main\" { cidr_block = var.vpc_cidr }\n\n3. SYNTAX: Do NOT generate 'aws_vpc_gateway_attachment' resources. Associate Internet Gateways directly by setting the 'vpc_id' argument inside the 'aws_internet_gateway' block.\n4. DOMAIN RESTRICTION: You are the NETWORK node. You MUST ONLY generate networking resources (VPCs, aws_subnet, IGWs, routing). Completely IGNORE any instances, security groups, or S3 buckets in the JSON."
@@ -162,11 +164,12 @@ def generate_security_node(state: GraphState) -> dict:
                 EXAMPLE WRONG: Environment = var.environment  EXAMPLE RIGHT: Environment = "production"
                 ONLY use the exact hardcoded AWS IDs provided in the input JSON data. IF an ID is missing, use a placeholder string.
                 Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
+                CRITICAL: For aws_iam_role, the import `id` MUST be the Role Name (e.g., "my-role-name"), NOT the full ARN.
                 Example syntax:
-                import {{{{
+                import {{
                     to = aws_security_group.vpc_sg
                     id = "sg-12345"
-                }}}}
+                }}
                 If the aws_input_data contains no security resources, output exactly: # No security resources required.
                 """
     elif mode == "clone":
@@ -187,7 +190,8 @@ def generate_security_node(state: GraphState) -> dict:
             "ABSOLUTE MANDATE FOR IMPORT MODE:\n"
             "1. SCOPE: ONLY generate resources explicitly listed in aws_input_data. If the JSON only has an S3 bucket, generate ONLY an aws_s3_bucket. DO NOT generate aws_db_instance or aws_autoscaling_group unless they are in the JSON.\n"
             "2. NO REFERENCES: NEVER use Terraform cross-references. WRONG: subnet_id = aws_subnet.sub-123.id. RIGHT: subnet_id = \"subnet-123\". MUST use string literals with quotes.\n"
-            "3. NO VARIABLES: NEVER use var.* syntax. WRONG: username = var.user. RIGHT: username = \"admin\". Hardcode all values."
+            "3. NO VARIABLES: NEVER use var.* syntax. WRONG: username = var.user. RIGHT: username = \"admin\". Hardcode all values.\n"
+            "4. IAM ROLES: When generating an aws_iam_role, you MUST define the required 'assume_role_policy' using a standard EC2 service trust policy document inside jsonencode."
         )
     else:  # clone
         prompt_user = "ABSOLUTE MANDATE FOR CLONE MODE:\n1. PARAMETERIZATION: Replace hardcoded IDs and names from the aws_input_data JSON with var.* references.\n2. VARIABLE DECLARATION: You MUST explicitly output a 'variable \"...\" {}' block for EVERY var.* reference you generate. Write these variable blocks AT THE VERY TOP of your output, inside the exact same HCL block as your resources. DO NOT omit them thinking they belong in a separate variables.tf file. YOU MUST WRITE THEM HERE.\nEXAMPLE REQUIRED OUTPUT:\nvariable \"vpc_cidr\" {}\nresource \"aws_vpc\" \"main\" { cidr_block = var.vpc_cidr }\n\n3. SYNTAX: Do NOT generate 'aws_vpc_gateway_attachment' resources. Associate Internet Gateways directly by setting the 'vpc_id' argument inside the 'aws_internet_gateway' block.\n4. DOMAIN RESTRICTION: You are the SECURITY node. You MUST ONLY generate security resources (aws_security_group, IAM). Completely IGNORE any subnets, instances, or S3 buckets in the JSON. CRITICAL: Because Security Groups require a VPC, you will likely parameterize the vpc_id. You MUST explicitly declare 'variable \"vpc_id\" {}' at the top of your output alongside any other variables."
@@ -250,10 +254,10 @@ def generate_compute_node(state: GraphState) -> dict:
                 ONLY use the exact hardcoded AWS IDs provided in the input JSON data. IF an ID is missing, use a placeholder string.
                 Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
                 Example syntax:
-                import {{{{
+                import {{
                     to = aws_instance.app
                     id = "i-0123456789abcdef0"
-                }}}}
+                }}
                 If the aws_input_data contains no compute resources, output exactly: # No compute resources required.
                 """
     elif mode == "clone":
@@ -268,13 +272,14 @@ def generate_compute_node(state: GraphState) -> dict:
     prompt = mode_instructions + "\n" + COMPUTE_PROMPT
 
     if mode == "new":
-        prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. NO VARIABLES ALLOWED: You are strictly FORBIDDEN from using ANY var.* references. You MUST hardcode ALL values. Hardcode cidr_blocks (e.g., '10.0.0.0/16') and tags (e.g., Environment = 'production').\n2. DEPENDENCIES & NAMING: You must strictly align resource names across files. The Network node MUST declare the VPC as 'resource \"aws_vpc\" \"main\"'. The Security node MUST declare the security group as 'resource \"aws_security_group\" \"main\"'. All cross-references must use 'aws_vpc.main.id' and 'aws_security_group.main.id'.\n3. BLOCK SYNTAX: Never use equals signs for repeatable configuration sub-blocks. Use 'attribute { ... }' instead of 'attribute = [ ... ]', and 'ingress { ... }' instead of 'ingress = [ ... ]'.\n4. DYNAMODB SYNTAX: If you generate an aws_dynamodb_table, you must define the 'hash_key'. If you specify 'read_capacity_units' and 'write_capacity_units', you MUST explicitly set 'billing_mode = \"PROVISIONED\"'.\n5. AWS_EIP SYNTAX: For aws_eip, you MUST ONLY use 'domain = \"vpc\"'. Completely remove 'vpc = true'."
+        prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. NO VARIABLES ALLOWED: You are strictly FORBIDDEN from using ANY var.* references. You MUST hardcode ALL values. Hardcode cidr_blocks (e.g., '10.0.0.0/16') and tags (e.g., Environment = 'production').\n2. DEPENDENCIES & NAMING: You must strictly align resource names across files. The Network node MUST declare the VPC as 'resource \"aws_vpc\" \"main\"'. The Security node MUST declare the security group as 'resource \"aws_security_group\" \"main\"'. All cross-references must use 'aws_vpc.main.id' and 'aws_security_group.main.id'.\n3. BLOCK SYNTAX: Never use equals signs for repeatable configuration sub-blocks. Use 'attribute { ... }' instead of 'attribute = [ ... ]', and 'ingress { ... }' instead of 'ingress = [ ... ]'.\n4. DYNAMODB SYNTAX: If you generate an aws_dynamodb_table, you must define the 'hash_key'. You MUST set 'billing_mode = \"PAY_PER_REQUEST\"'. Do NOT specify 'read_capacity_units' or 'write_capacity_units'.\n5. AWS_EIP SYNTAX: For aws_eip, you MUST ONLY use 'domain = \"vpc\"'. Completely remove 'vpc = true'."
     elif mode == "import":
         prompt_user = (
             "ABSOLUTE MANDATE FOR IMPORT MODE:\n"
             "1. SCOPE: ONLY generate resources explicitly listed in aws_input_data. If the JSON only has an S3 bucket, generate ONLY an aws_s3_bucket. DO NOT generate aws_db_instance or aws_autoscaling_group unless they are in the JSON.\n"
             "2. NO REFERENCES: NEVER use Terraform cross-references. WRONG: subnet_id = aws_subnet.sub-123.id. RIGHT: subnet_id = \"subnet-123\". MUST use string literals with quotes.\n"
-            "3. NO VARIABLES: NEVER use var.* syntax. WRONG: username = var.user. RIGHT: username = \"admin\". Hardcode all values."
+            "3. NO VARIABLES: NEVER use var.* syntax. WRONG: username = var.user. RIGHT: username = \"admin\". Hardcode all values.\n"
+            "4. DYNAMODB: If you generate an aws_dynamodb_table, you MUST set billing_mode = \"PAY_PER_REQUEST\" and you are strictly FORBIDDEN from specifying read_capacity_units or write_capacity_units."
         )
     else:  # clone
         prompt_user = "ABSOLUTE MANDATE FOR CLONE MODE:\n1. PARAMETERIZATION: Replace hardcoded IDs and names from the aws_input_data JSON with var.* references.\n2. VARIABLE DECLARATION: You MUST explicitly output a 'variable \"...\" {}' block for EVERY var.* reference you generate. Write these variable blocks AT THE VERY TOP of your output, inside the exact same HCL block as your resources. DO NOT omit them thinking they belong in a separate variables.tf file. YOU MUST WRITE THEM HERE.\nEXAMPLE REQUIRED OUTPUT:\nvariable \"vpc_cidr\" {}\nresource \"aws_vpc\" \"main\" { cidr_block = var.vpc_cidr }\n\n3. SYNTAX: Do NOT generate 'aws_vpc_gateway_attachment' resources. Associate Internet Gateways directly by setting the 'vpc_id' argument inside the 'aws_internet_gateway' block.\n4. DOMAIN RESTRICTION: You are the COMPUTE node. You MUST ONLY generate compute resources (aws_instance, ASG, Launch Templates). Completely IGNORE any subnets, security groups, or S3 buckets in the JSON. NEVER generate aws_subnet. CRITICAL: When you parameterize your resources, you MUST explicitly declare 'variable \"ami_id\" {}', 'variable \"instance_type\" {}', and 'variable \"subnet_id\" {}' (and any others you create) at the top of your output alongside your resources."
@@ -342,10 +347,10 @@ def generate_data_node(state: GraphState) -> dict:
                 ONLY use the exact hardcoded AWS IDs provided in the input JSON data. IF an ID is missing, use a placeholder string.
                 Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
                 Example syntax:
-                import {{{{
+                import {{
                     to = aws_db_instance.main
                     id = "db-ABCDEFGHIJK"
-                }}}}
+                }}
                 If the aws_input_data contains no data resources, output exactly: # No data resources required.
                 """
     elif mode == "clone":
@@ -360,13 +365,15 @@ def generate_data_node(state: GraphState) -> dict:
     prompt = mode_instructions + "\n" + DATA_PROMPT
 
     if mode == "new":
-        prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. NO VARIABLES ALLOWED: You are strictly FORBIDDEN from using ANY var.* references. You MUST hardcode ALL values. Hardcode cidr_blocks (e.g., '10.0.0.0/16') and tags (e.g., Environment = 'production').\n2. DEPENDENCIES & NAMING: You must strictly align resource names across files. The Network node MUST declare the VPC as 'resource \"aws_vpc\" \"main\"'. The Security node MUST declare the security group as 'resource \"aws_security_group\" \"main\"'. All cross-references must use 'aws_vpc.main.id' and 'aws_security_group.main.id'.\n3. BLOCK SYNTAX: Never use equals signs for repeatable configuration sub-blocks. Use 'attribute { ... }' instead of 'attribute = [ ... ]', and 'ingress { ... }' instead of 'ingress = [ ... ]'.\n4. DYNAMODB SYNTAX: If you generate an aws_dynamodb_table, you must define the 'hash_key'. If you specify 'read_capacity_units' and 'write_capacity_units', you MUST explicitly set 'billing_mode = \"PROVISIONED\"'.\n5. AWS_EIP SYNTAX: For aws_eip, you MUST ONLY use 'domain = \"vpc\"'. Completely remove 'vpc = true'."
+        prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. NO VARIABLES ALLOWED: You are strictly FORBIDDEN from using ANY var.* references. You MUST hardcode ALL values. Hardcode cidr_blocks (e.g., '10.0.0.0/16') and tags (e.g., Environment = 'production').\n2. DEPENDENCIES & NAMING: You must strictly align resource names across files. The Network node MUST declare the VPC as 'resource \"aws_vpc\" \"main\"'. The Security node MUST declare the security group as 'resource \"aws_security_group\" \"main\"'. All cross-references must use 'aws_vpc.main.id' and 'aws_security_group.main.id'.\n3. BLOCK SYNTAX: Never use equals signs for repeatable configuration sub-blocks. Use 'attribute { ... }' instead of 'attribute = [ ... ]', and 'ingress { ... }' instead of 'ingress = [ ... ]'.\n4. DYNAMODB SYNTAX: If you generate an aws_dynamodb_table, you must define the 'hash_key'. You MUST set 'billing_mode = \"PAY_PER_REQUEST\"'. Do NOT specify 'read_capacity_units' or 'write_capacity_units'.\n5. AWS_EIP SYNTAX: For aws_eip, you MUST ONLY use 'domain = \"vpc\"'. Completely remove 'vpc = true'."
     elif mode == "import":
         prompt_user = (
             "ABSOLUTE MANDATE FOR IMPORT MODE:\n"
             "1. SCOPE: ONLY generate resources explicitly listed in aws_input_data. If the JSON only has an S3 bucket, generate ONLY an aws_s3_bucket. DO NOT generate aws_db_instance or aws_autoscaling_group unless they are in the JSON.\n"
             "2. NO REFERENCES: NEVER use Terraform cross-references. WRONG: subnet_id = aws_subnet.sub-123.id. RIGHT: subnet_id = \"subnet-123\". MUST use string literals with quotes.\n"
-            "3. NO VARIABLES: NEVER use var.* syntax. WRONG: username = var.user. RIGHT: username = \"admin\". Hardcode all values."
+            "3. NO VARIABLES: NEVER use var.* syntax. WRONG: username = var.user. RIGHT: username = \"admin\". Hardcode all values.\n"
+            "4. DYNAMODB: If you generate an aws_dynamodb_table, you MUST set billing_mode = \"PAY_PER_REQUEST\" and you are strictly FORBIDDEN from specifying read_capacity_units or write_capacity_units.\n"
+            "5. RDS INSTANCES: When generating an aws_db_instance, if 'storage_encrypted = true' is in the telemetry, you MUST explicitly set 'storage_encrypted = true' in the resource block."
         )
     else:  # clone
         prompt_user = "ABSOLUTE MANDATE FOR CLONE MODE:\n1. PARAMETERIZATION: Replace hardcoded IDs and names from the aws_input_data JSON with var.* references.\n2. VARIABLE DECLARATION: You MUST explicitly output a 'variable \"...\" {}' block for EVERY var.* reference you generate. Write these variable blocks AT THE VERY TOP of your output, inside the exact same HCL block as your resources. DO NOT omit them thinking they belong in a separate variables.tf file. YOU MUST WRITE THEM HERE.\nEXAMPLE REQUIRED OUTPUT:\nvariable \"vpc_cidr\" {}\nresource \"aws_vpc\" \"main\" { cidr_block = var.vpc_cidr }\n\n3. SYNTAX: Do NOT generate 'aws_vpc_gateway_attachment' resources. Associate Internet Gateways directly by setting the 'vpc_id' argument inside the 'aws_internet_gateway' block.\n4. DOMAIN RESTRICTION: You are the DATA node. You MUST ONLY generate data/storage resources (aws_s3_bucket, RDS). Completely IGNORE any subnets, instances, or security groups in the JSON. NEVER generate aws_subnet or aws_security_group."

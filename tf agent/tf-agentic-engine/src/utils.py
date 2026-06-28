@@ -89,6 +89,14 @@ CRITICAL CONSTRAINT: Return ONLY valid, raw HCL structural syntax code blocks. D
 - For `aws_autoscaling_group`:
   1. `vpc_zone_identifier` MUST be a list/set of strings (e.g., `["subnet-123"]`, not `"subnet-123"`).
   2. NEVER use a `tags` block. You MUST define tags using individual `tag {{ key = "Environment" value = "production" propagate_at_launch = true }}` blocks.
+  3. You MUST always specify one of `launch_configuration`, `launch_template`, or `mixed_instances_policy` (e.g., `launch_template {{ id = "..." }}`). If none is specified in the telemetry, reference a placeholder launch template block.
+- For `aws_dynamodb_table`: You MUST set `billing_mode = "PAY_PER_REQUEST"`. You are strictly FORBIDDEN from specifying `read_capacity_units` or `write_capacity_units`.
+- For `aws_iam_role`: You MUST always specify the required **`assume_role_policy`** argument. If the exact policy document is not provided in the AWS telemetry, default to a standard EC2 service assume-role policy trust document via `jsonencode`.
+- For Terraform 1.5+ `import` blocks: You MUST always specify the `to` and `id` arguments. The argument `id` is REQUIRED and must be named exactly `id` (e.g., `id = "..."`). You are strictly FORBIDDEN from using `name = "..."` or any other argument name in place of `id`.
+  CRITICAL: All `import` blocks MUST be top-level blocks outside and separate from any resource blocks. You are strictly FORBIDDEN from nesting `import` blocks inside a resource block body.
+- For all resources (especially `aws_security_group` description and resource `tags` blocks): You MUST inspect the input JSON telemetry. If a resource contains a `description` or a `tags` block, you MUST copy the description value and the tag key-value pairs EXACTLY as they are into the generated HCL resource blocks. You are strictly FORBIDDEN from overriding, removing, or ignoring live tags (e.g. `Name` tags) or descriptions in favor of generic defaults (like Environment, Owner, ManagedBy) unless the telemetry tags are empty.
+- For `aws_s3_bucket`: The argument to set the bucket name is `bucket` (e.g., `bucket = "my-bucket"`). You are strictly FORBIDDEN from using `name = "my-bucket"`.
+- For resource local names (the block identifier after the resource type, e.g. `resource "aws_s3_bucket" "local_name"`): You MUST replace any hyphens (`-`) in the AWS resource name with underscores (`_`) (e.g. use `tf_engine_state_table` instead of `tf-engine-state-table` for the block identifier). However, the actual resource argument fields (like `name = "..."`, `bucket = "..."`, and `id = "..."` inside the `import` block) MUST keep their original hyphens to match AWS exactly.
 - Do NOT add a `description` argument to resources unless it is explicitly supported by that resource type (e.g. `aws_security_group` supports it, but `aws_autoscaling_group` and `aws_subnet` do NOT).
 ========================================================================
 """
