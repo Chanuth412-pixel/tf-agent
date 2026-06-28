@@ -39,6 +39,17 @@ def generate_network_node(state: GraphState) -> dict:
     print("[Node] Generating Network Configuration...")
     mode = state.get("deployment_mode")
 
+    if mode == "import":
+        aws_input = state.get("aws_input_data", {})
+        vpc_id = aws_input.get("vpc_id")
+        resources = aws_input.get("resources", [])
+        has_network = bool(vpc_id) or any(r.get("type") in ["aws_subnet", "aws_vpc"] for r in resources)
+        if not has_network:
+            print("[Node] No network resources found in AWS input data. Bypassing LLM.")
+            hcl = "# No network resources required."
+            parse_and_write_files(hcl, phase_filename="network.tf")
+            return {"network_hcl": hcl, "current_phase": "network"}
+
     # Define mode-specific instructions
     mode_instructions = ""
     if mode == "new":
@@ -67,10 +78,10 @@ def generate_network_node(state: GraphState) -> dict:
                 Do NOT generate or import Security Groups (aws_security_group) or IAM roles. Security Groups belong strictly to the SECURITY node.
                 Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
                 Example syntax:
-                import {{{{
+                import {{
                     to = aws_vpc.main
                     id = "vpc-12345"
-                }}}}
+                }}
                 If the aws_input_data contains no network resources, output exactly: # No network resources required.
                 """
     elif mode == "clone":
@@ -98,10 +109,35 @@ def generate_network_node(state: GraphState) -> dict:
     else:  # clone
         prompt_user = "ABSOLUTE MANDATE FOR CLONE MODE:\n1. PARAMETERIZATION: Replace hardcoded IDs and names from the aws_input_data JSON with var.* references.\n2. VARIABLE DECLARATION: You MUST explicitly output a 'variable \"...\" {}' block for EVERY var.* reference you generate. Write these variable blocks AT THE VERY TOP of your output, inside the exact same HCL block as your resources. DO NOT omit them thinking they belong in a separate variables.tf file. YOU MUST WRITE THEM HERE.\nEXAMPLE REQUIRED OUTPUT:\nvariable \"vpc_cidr\" {}\nresource \"aws_vpc\" \"main\" { cidr_block = var.vpc_cidr }\n\n3. SYNTAX: Do NOT generate 'aws_vpc_gateway_attachment' resources. Associate Internet Gateways directly by setting the 'vpc_id' argument inside the 'aws_internet_gateway' block.\n4. DOMAIN RESTRICTION: You are the NETWORK node. You MUST ONLY generate networking resources (VPCs, aws_subnet, IGWs, routing). Completely IGNORE any instances, security groups, or S3 buckets in the JSON."
 
+    # If there are validation results from a previous run, prepend them
+    val_errors = state.get("validation_results", "").replace("{", "{{").replace("}", "}}")
+    if val_errors:
+        prompt = val_errors + "\n" + prompt
+
+    hcl = call_cloud_llm(
+        prompt,
+        {
+            "aws_input_data": state.get("aws_input_data"),
+            "user_prompt": prompt_user,
+        },
+    )
+    parse_and_write_files(hcl, phase_filename="network.tf")
+    return {"network_hcl": hcl, "current_phase": "network"}
+
 
 def generate_security_node(state: GraphState) -> dict:
     print("[Node] Generating Security Configuration...")
     mode = state.get("deployment_mode")
+
+    if mode == "import":
+        aws_input = state.get("aws_input_data", {})
+        resources = aws_input.get("resources", [])
+        has_security = any(r.get("type") in ["aws_security_group", "aws_iam_role"] for r in resources)
+        if not has_security:
+            print("[Node] No security resources found in AWS input data. Bypassing LLM.")
+            hcl = "# No security resources required."
+            parse_and_write_files(hcl, phase_filename="security.tf")
+            return {"security_hcl": hcl, "current_phase": "security"}
 
     mode_instructions = ""
     if mode == "new":
@@ -179,6 +215,16 @@ def generate_security_node(state: GraphState) -> dict:
 def generate_compute_node(state: GraphState) -> dict:
     print("[Node] Generating Compute Configuration...")
     mode = state.get("deployment_mode")
+
+    if mode == "import":
+        aws_input = state.get("aws_input_data", {})
+        resources = aws_input.get("resources", [])
+        has_compute = any(r.get("type") in ["aws_instance", "aws_autoscaling_group", "aws_launch_template"] for r in resources)
+        if not has_compute:
+            print("[Node] No compute resources found in AWS input data. Bypassing LLM.")
+            hcl = "# No compute resources required."
+            parse_and_write_files(hcl, phase_filename="compute.tf")
+            return {"compute_hcl": hcl, "current_phase": "compute"}
 
     mode_instructions = ""
     if mode == "new":
@@ -261,6 +307,16 @@ def generate_compute_node(state: GraphState) -> dict:
 def generate_data_node(state: GraphState) -> dict:
     print("[Node] Generating Data Configuration...")
     mode = state.get("deployment_mode")
+
+    if mode == "import":
+        aws_input = state.get("aws_input_data", {})
+        resources = aws_input.get("resources", [])
+        has_data = any(r.get("type") in ["aws_s3_bucket", "aws_db_instance", "aws_dynamodb_table"] for r in resources)
+        if not has_data:
+            print("[Node] No data resources found in AWS input data. Bypassing LLM.")
+            hcl = "# No data resources required."
+            parse_and_write_files(hcl, phase_filename="data.tf")
+            return {"data_hcl": hcl, "current_phase": "data"}
 
     mode_instructions = ""
     if mode == "new":
