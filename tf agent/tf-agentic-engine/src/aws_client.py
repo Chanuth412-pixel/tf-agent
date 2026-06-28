@@ -70,6 +70,7 @@ def fetch_live_infrastructure(region_name=None):
                 if 'tf-engine' in role['RoleName'] or 'test' in role['RoleName']:
                     resources.append({
                         "type": "aws_iam_role",
+                        "id": role['RoleName'],
                         "name": role['RoleName'],
                         "arn": role['Arn']
                     })
@@ -105,6 +106,7 @@ def fetch_live_infrastructure(region_name=None):
             for asg in asgs_resp.get('AutoScalingGroups', []):
                 asg_entry = {
                     "type": "aws_autoscaling_group",
+                    "id": asg['AutoScalingGroupName'],
                     "name": asg['AutoScalingGroupName'],
                     "min_size": asg['MinSize'],
                     "max_size": asg['MaxSize'],
@@ -124,6 +126,7 @@ def fetch_live_infrastructure(region_name=None):
         for bucket in buckets_response.get('Buckets', []):
             resources.append({
                 "type": "aws_s3_bucket",
+                "id": bucket['Name'],
                 "name": bucket['Name']
             })
         
@@ -132,6 +135,7 @@ def fetch_live_infrastructure(region_name=None):
             for table_name in tables_resp.get('TableNames', []):
                 resources.append({
                     "type": "aws_dynamodb_table",
+                    "id": table_name,
                     "name": table_name
                 })
         except Exception as db_err:
