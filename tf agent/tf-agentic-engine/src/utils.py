@@ -40,13 +40,13 @@ SECURITY_PROMPT = f"""
 {COMMON_RULES}
 
 Generate the SECURITY layer only: security groups, network ACLs, IAM roles
-and policies. Use the provided `network_context` to reference `aws_vpc.main.id`
-and subnet resources. Ensure security groups reference `aws_vpc.main.id` and
+and policies. Use the provided `network_context` to reference `local.vpc_id`
+and subnet resources. Ensure security groups reference `local.vpc_id` and
 attach the standard `tags` block using `var.environment` and `var.owner`.
 
 CRITICAL SYNTAX RULES:
 1. Do NOT redefine or redeclare the `resource "aws_vpc" "main"` block — it must exist only in `network.tf`.
-2. Always reference the VPC using the exact attribute `aws_vpc.main.id`.
+2. Always reference the VPC using the exact attribute `local.vpc_id`.
 3. Do NOT emit naked top-level assignments; if local values are required wrap them inside `locals {{{{...}}}}`.
 4. Avoid duplicating security group names between runs; use fixed resource addressing.
 """
@@ -55,14 +55,14 @@ COMPUTE_PROMPT = f"""
 {COMMON_RULES}
 
 Generate the COMPUTE layer only: EC2 instances, launch templates, and
-auto-scaling groups. Reference `aws_subnet.public_1.id` or `aws_subnet.private_1.id`
+auto-scaling groups. Reference `local.subnet_ids` or `local.vpc_id`
 as appropriate and reference security groups by resource address. Use
 `var.instance_type` and `var.ami_id` rather than hardcoding values.
 Include placements across subnets as necessary.
 
 CRITICAL SYNTAX RULES:
 1. Do NOT redefine the VPC or any Security Groups — reference them by resource address only.
-2. Attach instances to subnets using `subnet_id = aws_subnet.public_1.id` (do not hardcode strings).
+2. Attach instances to subnets or specify subnets using `local.subnet_ids` (do not hardcode strings).
 3. Do NOT reference resources that are not declared (e.g., `aws_key_pair`), unless explicitly created within this compute phase.
 """
 
@@ -271,3 +271,112 @@ def execute_terraform_validation(workspace_dir: str = "terraform_workspace") -> 
 
     except json.JSONDecodeError:
         return {"is_valid": False, "error_logs": [val_result.stderr]}
+
+
+def parse_hcl_dependencies(workspace_path="terraform_workspace"):
+    dependency_map = {}
+    defined_resources = set()
+    resource_blocks = {}
+    
+    if not os.path.exists(workspace_path):
+        return {}
+        
+    tf_files = [f for f in os.listdir(workspace_path) if f.endswith('.tf')]
+    
+    # 1. Parse all blocks (resources, datas, locals)
+    for tf_file in tf_files:
+        file_path = os.path.join(workspace_path, tf_file)
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+            
+        lines = content.splitlines()
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            # Ignore comments
+            if line.startswith('#') or line.startswith('//'):
+                i += 1
+                continue
+                
+            match = re.match(r'^(resource|data)\s+"([^"]+)"\s+"([^"]+)"\s*\{', line)
+            locals_match = re.match(r'^locals\s*\{', line)
+            
+            if match:
+                res_type, res_name = match.group(2), match.group(3)
+                full_name = f"{res_type}.{res_name}"
+                defined_resources.add(full_name)
+                
+                # Collect block content matching braces
+                block_lines = [line]
+                brace_count = 1
+                i += 1
+                while i < len(lines) and brace_count > 0:
+                    l = lines[i]
+                    brace_count += l.count('{') - l.count('}')
+                    block_lines.append(l)
+                    i += 1
+                resource_blocks[full_name] = "\n".join(block_lines)
+                continue
+                
+            elif locals_match:
+                block_lines = [line]
+                brace_count = 1
+                i += 1
+                while i < len(lines) and brace_count > 0:
+                    l = lines[i]
+                    brace_count += l.count('{') - l.count('}')
+                    block_lines.append(l)
+                    i += 1
+                
+                # Parse assignments within the locals block
+                for l in block_lines[1:-1]:
+                    l_strip = l.strip()
+                    if l_strip.startswith('#') or l_strip.startswith('//'):
+                        continue
+                    assign_match = re.match(r'^(\w+)\s*=\s*(.*)', l_strip)
+                    if assign_match:
+                        var_name = assign_match.group(1)
+                        var_val = assign_match.group(2)
+                        full_name = f"local.{var_name}"
+                        defined_resources.add(full_name)
+                        resource_blocks[full_name] = var_val
+                continue
+            i += 1
+            
+    # 2. Map resource/local variables to their referenced dependencies
+    for res, block_text in resource_blocks.items():
+        dependencies = set()
+        for other_res in defined_resources:
+            if other_res == res:
+                continue
+            # Look for references
+            pattern = r'\b' + re.escape(other_res) + r'\b'
+            if re.search(pattern, block_text):
+                dependencies.add(other_res)
+        dependency_map[res] = list(dependencies)
+        
+    return dependency_map
+
+
+def generate_terraform_graph(workspace_path):
+    try:
+        # Generate the DOT file representing the execution plan
+        dot_file_path = os.path.join(workspace_path, "graph.dot")
+        with open(dot_file_path, "w", encoding="utf-8") as f:
+            subprocess.run(
+                ["terraform", "graph", "-type=plan"], 
+                cwd=workspace_path, 
+                stdout=f, 
+                check=True
+            )
+        
+        # Convert the DOT file to a PNG
+        subprocess.run(
+            ["dot", "-Tpng", "graph.dot", "-o", "dependency_graph.png"], 
+            cwd=workspace_path, 
+            check=True
+        )
+        print("Dependency graph generated successfully.")
+        
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        print(f"Graph generation failed: {e}")

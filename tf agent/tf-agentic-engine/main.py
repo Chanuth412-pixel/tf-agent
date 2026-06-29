@@ -9,6 +9,7 @@ def main():
     # Change these variables to test the different use cases
     MODE = "import" # Change to "new", "import", or "clone"
     USER_PROMPT = "Create a highly available 3-tier VPC with 2 public and 2 private subnets."
+    TARGET_VPC_ID = "vpc-12345678" # Set to a VPC ID (e.g. "vpc-12345678") to resolve external dependency
     
     aws_data = {}
     
@@ -16,7 +17,7 @@ def main():
     if MODE in ["import", "clone"]:
         print(f"[Agent] Mode: {MODE}. Fetching existing AWS infrastructure...")
         # Use test_fetcher_locally() for safe RAM testing, or fetch_live_infrastructure() for production
-        aws_data = fetch_live_infrastructure() 
+        aws_data = test_fetcher_locally() 
     elif MODE == "new":
         print(f"[Agent] Mode: {MODE}. Bypassing AWS fetch. Using user prompt.")
     else:
@@ -27,6 +28,7 @@ def main():
     initial_state = {
         "deployment_mode": MODE,
         "user_prompt": USER_PROMPT,
+        "target_vpc_id": TARGET_VPC_ID,
         "aws_input_data": aws_data,
         "retry_count": 0,
         "max_retries": 3,
