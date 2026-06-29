@@ -363,8 +363,156 @@ def parse_and_write_files(data, phase_filename=None):
                     pass
 
     # Deduplicate resources across the newly written files
+    post_process_hcl_compliance(workspace_dir)
     deduplicate_resources(workspace_dir)
     return True
+
+
+def post_process_hcl_compliance(workspace_dir: str) -> None:
+    """
+    Applies automated HCL syntax corrections for common LLM hallucinations
+    (e.g., tags inside aws_autoscaling_group, status inside aws_s3_bucket).
+    """
+    import glob
+    import re
+    
+    tf_files = glob.glob(os.path.join(workspace_dir, "*.tf"))
+    for tf_file in tf_files:
+        if not os.path.exists(tf_file):
+            continue
+        try:
+            with open(tf_file, "r", encoding="utf-8") as f:
+                content = f.read()
+        except Exception:
+            continue
+            
+        modified = False
+        new_content = content
+        
+        # 1. Fix aws_autoscaling_group "tags = ..." or "tags_all = ..."
+        asg_matches = list(re.finditer(r'resource\s+"aws_autoscaling_group"\s+"([^"]+)"\s*\{', new_content))
+        for match in reversed(asg_matches):
+            start_idx = match.end() - 1
+            brace_count = 0
+            block_content = []
+            has_ended = False
+            for char in new_content[start_idx:]:
+                block_content.append(char)
+                if char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        has_ended = True
+                        break
+                        
+            if has_ended:
+                block_str = "".join(block_content)
+                full_block_start = match.start()
+                full_block_end = start_idx + len(block_str)
+                
+                asg_tags_match = re.search(r'\btags?\s*=\s*([\[\{])', block_str)
+                if asg_tags_match:
+                    tags_start = asg_tags_match.end() - 1
+                    opener = asg_tags_match.group(1)
+                    closer = ']' if opener == '[' else '}'
+                    
+                    t_brace_count = 0
+                    tags_block = []
+                    tags_ended = False
+                    for char in block_str[tags_start:]:
+                        tags_block.append(char)
+                        if char == opener:
+                            t_brace_count += 1
+                        elif char == closer:
+                            t_brace_count -= 1
+                            if t_brace_count == 0:
+                                tags_ended = True
+                                break
+                                
+                    if tags_ended:
+                        full_tags_decl = block_str[asg_tags_match.start():tags_start + len(tags_block)]
+                        tags_text = "".join(tags_block)
+                        inline_tags_str = ""
+                        
+                        seen_keys = set()
+                        pairs = re.findall(r'["\']?([a-zA-Z0-9_.-]+)["\']?\s*[=:]\s*["\']?([^"\'\n]+)["\']?', tags_text)
+                        for k, v in pairs:
+                            k_clean = k.strip()
+                            v_clean = v.strip()
+                            if k_clean in ["key", "value", "propagate_at_launch"]:
+                                continue
+                            if k_clean not in seen_keys:
+                                seen_keys.add(k_clean)
+                                inline_tags_str += f'\n  tag {{\n    key                 = "{k_clean}"\n    value               = "{v_clean}"\n    propagate_at_launch = true\n  }}'
+                        
+                        list_maps = re.findall(r'\{\s*key\s*=\s*["\']?([^"\']+)["\']?\s*value\s*=\s*["\']?([^"\']+)["\']?(?:\s*propagate_at_launch\s*=\s*(true|false))?\s*\}', tags_text)
+                        for l_key, l_val, l_prop in list_maps:
+                            k_clean = l_key.strip()
+                            v_clean = l_val.strip()
+                            prop = l_prop.strip() if l_prop else "true"
+                            if k_clean not in seen_keys:
+                                seen_keys.add(k_clean)
+                                inline_tags_str += f'\n  tag {{\n    key                 = "{k_clean}"\n    value               = "{v_clean}"\n    propagate_at_launch = {prop}\n  }}'
+
+                        new_block_str = block_str.replace(full_tags_decl, inline_tags_str)
+                        new_content = new_content[:full_block_start] + f'resource "aws_autoscaling_group" "{match.group(1)}" ' + new_block_str + new_content[full_block_end:]
+                        modified = True
+                        print(f"[Corrector] Converted tags in aws_autoscaling_group.{match.group(1)} to inline tag blocks.")
+
+        # 2. Fix aws_s3_bucket status inside versioning block
+        s3_bucket_matches = list(re.finditer(r'resource\s+"aws_s3_bucket"\s+"([^"]+)"\s*\{', new_content))
+        for match in reversed(s3_bucket_matches):
+            start_idx = match.end() - 1
+            brace_count = 0
+            block_content = []
+            has_ended = False
+            for char in new_content[start_idx:]:
+                block_content.append(char)
+                if char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        has_ended = True
+                        break
+                        
+            if has_ended:
+                block_str = "".join(block_content)
+                full_block_start = match.start()
+                full_block_end = start_idx + len(block_str)
+                
+                versioning_match = re.search(r'\bversioning\s*\{', block_str)
+                if versioning_match:
+                    v_start = versioning_match.end() - 1
+                    v_brace_count = 0
+                    v_block = []
+                    v_ended = False
+                    for char in block_str[v_start:]:
+                        v_block.append(char)
+                        if char == '{':
+                            v_brace_count += 1
+                        elif char == '}':
+                            v_brace_count -= 1
+                            if v_brace_count == 0:
+                                v_ended = True
+                                break
+                                
+                    if v_ended:
+                        full_versioning_decl = block_str[versioning_match.start():v_start + len(v_block)]
+                        cleaned_versioning = re.sub(r'\bstatus\s*=\s*["\']?[a-zA-Z0-9_-]+["\']?', '', full_versioning_decl)
+                        
+                        new_block_str = block_str.replace(full_versioning_decl, cleaned_versioning)
+                        new_content = new_content[:full_block_start] + f'resource "aws_s3_bucket" "{match.group(1)}" ' + new_block_str + new_content[full_block_end:]
+                        modified = True
+                        print(f"[Corrector] Removed unsupported status from versioning in aws_s3_bucket.{match.group(1)}.")
+
+        if modified:
+            try:
+                with open(tf_file, "w", encoding="utf-8") as f:
+                    f.write(new_content)
+            except Exception as e:
+                print(f"Error writing corrected file {tf_file}: {e}")
 
 
 def execute_terraform_validation(workspace_dir: str = "terraform_workspace") -> dict:
