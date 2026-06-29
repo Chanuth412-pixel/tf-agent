@@ -272,6 +272,81 @@ def deduplicate_variables(workspace_dir: str) -> None:
             print(f"Error writing variables.tf: {e}")
 
 
+def deduplicate_resources(workspace_dir: str) -> None:
+    """
+    Scans all .tf files in the workspace, finds duplicate resource definitions
+    (same type and local name), and removes the duplicate blocks from subsequent files.
+    """
+    import re
+    import glob
+    
+    seen_resources = set()
+    tf_files = glob.glob(os.path.join(workspace_dir, "*.tf"))
+    
+    # Establish logical order to prioritize keeping resources in their proper phase files
+    logical_order = ["network.tf", "security.tf", "compute.tf", "data.tf"]
+    ordered_files = []
+    
+    for f_name in logical_order:
+        full_path = os.path.join(workspace_dir, f_name)
+        if full_path in tf_files:
+            ordered_files.append(full_path)
+            
+    for tf_file in tf_files:
+        if tf_file not in ordered_files and os.path.basename(tf_file) != "variables.tf":
+            ordered_files.append(tf_file)
+
+    for tf_file in ordered_files:
+        if not os.path.exists(tf_file):
+            continue
+        try:
+            with open(tf_file, "r", encoding="utf-8") as f:
+                content = f.read()
+        except Exception:
+            continue
+
+        modified = False
+        new_content = content
+
+        matches = list(re.finditer(r'resource\s+"([^"]+)"\s+"([^"]+)"\s*\{', new_content))
+        for match in reversed(matches):
+            res_type = match.group(1)
+            res_name = match.group(2)
+            resource_key = f"{res_type}.{res_name}"
+
+            start_idx = match.end() - 1
+            brace_count = 0
+            block_content = []
+            has_ended = False
+            for char in new_content[start_idx:]:
+                block_content.append(char)
+                if char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        has_ended = True
+                        break
+
+            if has_ended:
+                block_str = "".join(block_content)
+                if resource_key in seen_resources:
+                    end_idx = start_idx + len(block_str)
+                    block_start = match.start()
+                    new_content = new_content[:block_start] + new_content[end_idx:]
+                    modified = True
+                    print(f"[Deduplicator] Removed duplicate resource definition: {resource_key} in {os.path.basename(tf_file)}")
+                else:
+                    seen_resources.add(resource_key)
+
+        if modified:
+            try:
+                with open(tf_file, "w", encoding="utf-8") as f:
+                    f.write(new_content.strip() + "\n")
+            except Exception as e:
+                print(f"Error writing deduplicated {tf_file}: {e}")
+
+
 def parse_and_write_files(data, phase_filename=None):
     workspace_dir = "terraform_workspace"
     os.makedirs(workspace_dir, exist_ok=True)
@@ -298,6 +373,7 @@ def parse_and_write_files(data, phase_filename=None):
                 f.write(cleaned_content)
 
     deduplicate_variables(workspace_dir)
+    deduplicate_resources(workspace_dir)
     return True
 
 
