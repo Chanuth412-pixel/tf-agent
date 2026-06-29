@@ -366,26 +366,313 @@ def execute_terraform_validation(workspace_dir: str = "terraform_workspace") -> 
                 errors.append(error_msg.strip())
 
         return {"is_valid": False, "error_logs": errors}
+    return content.strip()
+
+
+def deduplicate_variables(workspace_dir: str) -> None:
+    """
+    Scans all .tf files in the workspace (except variables.tf and provider.tf),
+    extracts variable definitions, removes them from the source files,
+    and writes them uniquely to a single variables.tf file to prevent duplicates.
+    """
+    import re
+    import glob
+    
+    variables_map = {}
+    tf_files = glob.glob(os.path.join(workspace_dir, "*.tf"))
+    
+    # 1. Read existing variables.tf if it exists to seed our variables map
+    variables_tf_path = os.path.join(workspace_dir, "variables.tf")
+    if os.path.exists(variables_tf_path):
+        try:
+            with open(variables_tf_path, "r", encoding="utf-8") as f:
+                var_content = f.read()
+            for match in re.finditer(r'variable\s+"([^"]+)"\s*\{', var_content):
+                var_name = match.group(1)
+                start_idx = match.end() - 1
+                brace_count = 0
+                block_content = []
+                for char in var_content[start_idx:]:
+                    block_content.append(char)
+                    if char == '{':
+                        brace_count += 1
+                    elif char == '}':
+                        brace_count -= 1
+                        if brace_count == 0:
+                            break
+                variables_map[var_name] = f'variable "{var_name}" ' + "".join(block_content)
+        except Exception as e:
+            print(f"Error reading variables.tf: {e}")
+
+    # 2. Scan other tf files to extract variable definitions
+    for tf_file in tf_files:
+        basename = os.path.basename(tf_file)
+        if basename in ["variables.tf", "provider.tf"]:
+            continue
+            
+        if not os.path.exists(tf_file):
+            continue
+            
+        try:
+            with open(tf_file, "r", encoding="utf-8") as f:
+                content = f.read()
+        except Exception:
+            continue
+            
+        modified = False
+        new_content = content
+        
+        matches = list(re.finditer(r'variable\s+"([^"]+)"\s*\{', new_content))
+        for match in reversed(matches):
+            var_name = match.group(1)
+            start_idx = match.end() - 1
+            brace_count = 0
+            block_content = []
+            
+            has_ended = False
+            for char in new_content[start_idx:]:
+                block_content.append(char)
+                if char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        has_ended = True
+                        break
+            
+            if has_ended:
+                block_str = "".join(block_content)
+                variables_map[var_name] = f'variable "{var_name}" ' + block_str
+                end_idx = start_idx + len(block_str)
+                block_start = match.start()
+                new_content = new_content[:block_start] + new_content[end_idx:]
+                modified = True
+                
+        if modified:
+            try:
+                with open(tf_file, "w", encoding="utf-8") as f:
+                    f.write(new_content.strip() + "\n")
+            except Exception as e:
+                print(f"Error writing updated {tf_file}: {e}")
+
+    # 3. Write all collected unique variables to variables.tf
+    if variables_map:
+        try:
+            sorted_vars = sorted(variables_map.items())
+            variables_tf_content = "\n\n".join(val for name, val in sorted_vars)
+            with open(variables_tf_path, "w", encoding="utf-8") as f:
+                f.write(variables_tf_content.strip() + "\n")
+        except Exception as e:
+            print(f"Error writing variables.tf: {e}")
+
+
+def parse_and_write_files(data, phase_filename=None):
+    workspace_dir = "terraform_workspace"
+    os.makedirs(workspace_dir, exist_ok=True)
+
+    files_to_write = {}
+
+    # Handle full state dictionary (if called by the validator or main graph)
+    if isinstance(data, dict):
+        files_to_write = {
+            "network.tf": data.get("network_hcl", ""),
+            "security.tf": data.get("security_hcl", ""),
+            "compute.tf": data.get("compute_hcl", ""),
+            "data.tf": data.get("data_hcl", "")
+        }
+    # Handle single file generation (called directly by individual nodes)
+    elif isinstance(data, str) and phase_filename:
+        files_to_write = {phase_filename: data}
+
+    for filename, content in files_to_write.items():
+        if content:
+            cleaned_content = clean_hcl_output(content)
+            filepath = os.path.join(workspace_dir, filename)
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(cleaned_content)
+
+    deduplicate_variables(workspace_dir)
+    return True
+
+
+def execute_terraform_validation(workspace_dir: str = "terraform_workspace") -> dict:
+    """
+    Runs offline AST syntax formatting, then local semantic validation.
+    """
+    # 1. Format the HCL (AST Syntax Check)
+    try:
+        fmt_result = subprocess.run(
+            ["terraform", "fmt"],
+            cwd=workspace_dir,
+            capture_output=True,
+        )
+    except FileNotFoundError:
+        return {"is_valid": False, "error_logs": ["Terraform binary not found. Ensure Terraform is installed and in your PATH."]}
+
+    if fmt_result.returncode != 0:
+        stderr = fmt_result.stderr.decode() if isinstance(fmt_result.stderr, (bytes, bytearray)) else (fmt_result.stderr or "")
+        return {"is_valid": False, "error_logs": ["Syntax Error: " + stderr.strip()]}
+
+    # 2. Define the path to your custom .terraformrc
+    project_root = os.path.abspath(os.path.join(workspace_dir, ".."))
+    env = os.environ.copy()
+    env["TF_CLI_CONFIG_FILE"] = f"{project_root}{os.sep}.terraformrc"
+
+    # 3. Offline Initialization (Using the local filesystem mirror)
+    try:
+        init_result = subprocess.run(
+            ["terraform", "init", "-backend=false"],
+            cwd=workspace_dir,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except subprocess.TimeoutExpired:
+        return {"is_valid": False, "error_logs": ["Init timed out."]}
+
+    if init_result.returncode != 0:
+        return {"is_valid": False, "error_logs": [f"Init Failed: {init_result.stderr}"]}
+
+    # 4. Deep Semantic Validation
+    try:
+        val_result = subprocess.run(
+            ["terraform", "validate", "-json"],
+            cwd=workspace_dir,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except subprocess.TimeoutExpired:
+        return {"is_valid": False, "error_logs": ["Validation timed out."]}
+
+    if val_result.returncode == 0:
+        return {"is_valid": True, "error_logs": []}
+
+    # 5. Parse JSON semantic errors to feed back to the LLM
+    try:
+        val_data = json.loads(val_result.stdout)
+        errors = []
+        for diag in val_data.get('diagnostics', []):
+            if diag.get('severity') == 'error':
+                error_msg = f"{diag.get('summary')}: {diag.get('detail', '')}"
+                errors.append(error_msg.strip())
+
+        return {"is_valid": False, "error_logs": errors}
 
     except json.JSONDecodeError:
         return {"is_valid": False, "error_logs": [val_result.stderr]}
-                    assign_match = re.match(r'^(\w+)\s*=\s*(.*)', l_strip)
-                    if assign_match:
-                        var_name = assign_match.group(1)
-                        var_val = assign_match.group(2)
-                        full_name = f"local.{var_name}"
-                        defined_resources.add(full_name)
-                        resource_blocks[full_name] = var_val
-                continue
-            i += 1
+
+
+def parse_dependencies(workspace_dir: str) -> dict:
+    """
+    Parses variables, local mappings, resources, and data blocks from 
+    all HCL (.tf) files in the workspace directory.
+    Constructs an internal map of resource dependencies.
+    """
+    import re
+    import glob
+    
+    defined_resources = set()
+    resource_blocks = {}
+    
+    # Scan and find all resources and local/variable definitions
+    tf_files = glob.glob(os.path.join(workspace_dir, "*.tf"))
+    
+    for tf_file in tf_files:
+        if not os.path.exists(tf_file):
+            continue
+        try:
+            with open(tf_file, "r", encoding="utf-8") as f:
+                content = f.read()
+        except Exception as e:
+            print(f"Failed to read {tf_file} for dependency parsing: {e}")
+            continue
             
-    # 2. Map resource/local variables to their referenced dependencies
+        # Extract variables
+        variables = re.findall(r'variable\s+"([^"]+)"\s*\{', content)
+        for var in variables:
+            full_name = f"var.{var}"
+            defined_resources.add(full_name)
+            resource_blocks[full_name] = ""
+            
+        # Extract resources
+        for match in re.finditer(r'resource\s+"([^"]+)"\s+"([^"]+)"\s*\{', content):
+            res_type = match.group(1)
+            res_name = match.group(2)
+            full_name = f"{res_type}.{res_name}"
+            defined_resources.add(full_name)
+            
+            # Extract block content by matching braces
+            start_idx = match.end() - 1
+            brace_count = 0
+            block_content = []
+            for char in content[start_idx:]:
+                block_content.append(char)
+                if char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        break
+            resource_blocks[full_name] = "".join(block_content)
+            
+        # Extract data sources
+        for match in re.finditer(r'data\s+"([^"]+)"\s+"([^"]+)"\s*\{', content):
+            res_type = match.group(1)
+            res_name = match.group(2)
+            full_name = f"data.{res_type}.{res_name}"
+            defined_resources.add(full_name)
+            
+            start_idx = match.end() - 1
+            brace_count = 0
+            block_content = []
+            for char in content[start_idx:]:
+                block_content.append(char)
+                if char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        break
+            resource_blocks[full_name] = "".join(block_content)
+            
+        # Extract locals
+        for match in re.finditer(r'locals\s*\{', content):
+            start_idx = match.end() - 1
+            brace_count = 0
+            block_content = []
+            for char in content[start_idx:]:
+                block_content.append(char)
+                if char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        break
+            locals_text = "".join(block_content)
+            
+            # Line by line parsing of local assignments
+            for line in locals_text.splitlines():
+                line_clean = line.strip()
+                if line_clean.startswith("#") or line_clean.startswith("//"):
+                    continue
+                assign_match = re.match(r'^([a-zA-Z0-9_-]+)\s*=\s*(.*)', line_clean)
+                if assign_match:
+                    var_name = assign_match.group(1)
+                    var_val = assign_match.group(2)
+                    full_name = f"local.{var_name}"
+                    defined_resources.add(full_name)
+                    resource_blocks[full_name] = var_val
+
+    # Map resources to their referenced dependencies
+    dependency_map = {}
     for res, block_text in resource_blocks.items():
         dependencies = set()
         for other_res in defined_resources:
             if other_res == res:
                 continue
-            # Look for references
             pattern = r'\b' + re.escape(other_res) + r'\b'
             if re.search(pattern, block_text):
                 dependencies.add(other_res)
@@ -394,25 +681,137 @@ def execute_terraform_validation(workspace_dir: str = "terraform_workspace") -> 
     return dependency_map
 
 
-def generate_terraform_graph(workspace_path):
+def find_missing_references(workspace_dir: str, dependency_map: dict) -> list:
+    """
+    Scans the resource blocks for any references of resources, variables, data sources,
+    or local values, and flags if those targets are NOT defined in our files.
+    """
+    import re
+    import glob
+
+    defined_keys = set(dependency_map.keys())
+    tf_files = glob.glob(os.path.join(workspace_dir, "*.tf"))
+    missing_errors = []
+
+    # Matches typical references:
+    # aws_vpc.main, var.vpc_id, local.vpc_id, data.aws_vpc.main
+    ref_pattern = r'\b((?:aws_[a-zA-Z0-9_-]+|var|local|data\.[a-zA-Z0-9_-]+)\.[a-zA-Z0-9_-]+)\b'
+
+    for tf_file in tf_files:
+        if not os.path.exists(tf_file):
+            continue
+        try:
+            with open(tf_file, "r", encoding="utf-8") as f:
+                content = f.read()
+        except Exception:
+            continue
+
+        for match in re.finditer(r'(resource|data)\s+"([^"]+)"\s+"([^"]+)"\s*\{', content):
+            res_type = match.group(1)
+            res_type_full = match.group(2)
+            res_name = match.group(3)
+            current_resource = f"{res_type_full}.{res_name}" if res_type == "resource" else f"data.{res_type_full}.{res_name}"
+
+            start_idx = match.end() - 1
+            brace_count = 0
+            block_content = []
+            for char in content[start_idx:]:
+                block_content.append(char)
+                if char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        break
+            block_text = "".join(block_content)
+
+            references = re.findall(ref_pattern, block_text)
+            for ref in references:
+                if ref == current_resource:
+                    continue
+                if ref.startswith("path.") or ref.startswith("each.") or ref.startswith("count."):
+                    continue
+                if ref not in defined_keys:
+                    missing_errors.append(
+                        f"Resource '{current_resource}' references '{ref}', but '{ref}' is not defined in the workspace."
+                    )
+
+    return missing_errors
+
+
+def detect_cycles(dependency_map: dict) -> list:
+    """
+    Detects circular dependencies in the dependency map using DFS.
+    Returns a list of cycle paths if any exist.
+    """
+    visited = {}  # 0 = unvisited, 1 = visiting, 2 = visited
+    cycles = []
+    
+    def dfs(node, path):
+        visited[node] = 1
+        for neighbor in dependency_map.get(node, []):
+            if neighbor not in dependency_map:
+                continue
+            if visited.get(neighbor, 0) == 1:
+                # Cycle detected
+                cycle_path = path + [neighbor]
+                try:
+                    cycle_start = cycle_path.index(neighbor)
+                    cycles.append(cycle_path[cycle_start:])
+                except ValueError:
+                    cycles.append(cycle_path)
+            elif visited.get(neighbor, 0) == 0:
+                dfs(neighbor, path + [neighbor])
+        visited[node] = 2
+
+    for node in dependency_map:
+        if visited.get(node, 0) == 0:
+            dfs(node, [node])
+            
+    return cycles
+
+
+def generate_terraform_graph(workspace_path: str) -> None:
+    """
+    Runs terraform init, generates a dependency graph DOT file, and tries
+    to convert it to PNG if graphviz is available.
+    """
     try:
-        # Generate the DOT file representing the execution plan
-        dot_file_path = os.path.join(workspace_path, "graph.dot")
+        project_root = os.path.abspath(os.path.join(workspace_path, ".."))
+        env = os.environ.copy()
+        env["TF_CLI_CONFIG_FILE"] = f"{project_root}{os.sep}.terraformrc"
+
+        subprocess.run(
+            ["terraform", "init", "-backend=false"],
+            cwd=workspace_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=True
+        )
+
+        dot_file_path = os.path.join(workspace_path, "dependency_graph.dot")
         with open(dot_file_path, "w", encoding="utf-8") as f:
             subprocess.run(
                 ["terraform", "graph", "-type=plan"], 
                 cwd=workspace_path, 
+                env=env,
                 stdout=f, 
+                timeout=15,
                 check=True
             )
         
-        # Convert the DOT file to a PNG
-        subprocess.run(
-            ["dot", "-Tpng", "graph.dot", "-o", "dependency_graph.png"], 
-            cwd=workspace_path, 
-            check=True
-        )
-        print("Dependency graph generated successfully.")
+        try:
+            subprocess.run(
+                ["dot", "-Tpng", "dependency_graph.dot", "-o", "dependency_graph.png"], 
+                cwd=workspace_path, 
+                capture_output=True,
+                check=True
+            )
+            print("Dependency graph PNG generated successfully.")
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            print("Graphviz 'dot' command not found or failed. Skipping PNG generation.")
         
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
         print(f"Graph generation failed: {e}")
