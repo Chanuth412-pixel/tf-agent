@@ -10,8 +10,10 @@ from src.utils import (
     SECURITY_PROMPT,
     COMPUTE_PROMPT,
     DATA_PROMPT,
+    parse_dependencies,
+    find_missing_references,
+    detect_cycles,
     generate_terraform_graph,
-    parse_hcl_dependencies,
 )
 
 
@@ -21,7 +23,7 @@ def routing_decision_router(state: GraphState) -> str:
     Returns one of: 'fix_network', 'fix_security', 'fix_compute', 'fix_data', or 'complete'
     """
     if state.get("is_valid"):
-        return "generate_graph"
+        return "complete"
     if state.get("retry_count", 0) >= state.get("max_retries", 3):
         print(
             f"[Router] Max retries ({state.get('max_retries')}) reached. Forcing exit."
@@ -38,47 +40,95 @@ def routing_decision_router(state: GraphState) -> str:
     return f"fix_{phase}"
 
 
-def generate_network_tf(state: GraphState) -> str:
-    target_vpc = state.get("target_vpc_id")
-    
-    if target_vpc:
-        hcl = f"""
-# Resolve external dependencies
-data "aws_subnets" "target" {{
-  filter {{
-    name   = "vpc-id"
-    values = ["{target_vpc}"]
-  }}
-}}
-
-locals {{
-  vpc_id     = "{target_vpc}"
-  subnet_ids = data.aws_subnets.target.ids
-}}
-"""
-    else:
-        hcl = """
-# Provision new stack
-resource "aws_vpc" "main" {
-  cidr_block = "10.0.0.0/16"
-}
-
-resource "aws_subnet" "public_1" {
-  vpc_id     = aws_vpc.main.id
-  cidr_block = "10.0.1.0/24"
-}
-
-locals {
-  vpc_id     = aws_vpc.main.id
-  subnet_ids = [aws_subnet.public_1.id]
-}
-"""
-    return hcl
-
-
 def generate_network_node(state: GraphState) -> dict:
     print("[Node] Generating Network Configuration...")
-    hcl = generate_network_tf(state)
+    mode = state.get("deployment_mode")
+
+    if mode == "import":
+        aws_input = state.get("aws_input_data", {})
+        vpc_id = aws_input.get("vpc_id")
+        resources = aws_input.get("resources", [])
+        has_network = bool(vpc_id) or any(r.get("type") in ["aws_subnet", "aws_vpc"] for r in resources)
+        if not has_network:
+            print("[Node] No network resources found in AWS input data. Bypassing LLM.")
+            hcl = "# No network resources required."
+            parse_and_write_files(hcl, phase_filename="network.tf")
+            return {"network_hcl": hcl, "current_phase": "network"}
+
+    # Define mode-specific instructions
+    mode_instructions = ""
+    if mode == "new":
+        mode_instructions = f"""
+        MODE: NEW INFRASTRUCTURE
+        You are the NETWORK generation node.
+        ONLY generate network-specific resources (VPCs, Subnets, IGWs, NAT, Route Tables).
+                Do NOT generate compute, security, or database resources.
+                Do NOT generate or import Security Groups (aws_security_group) or IAM roles. Security Groups belong strictly to the SECURITY node.
+                Build the requested architecture from scratch using standard Terraform cross-references (for example: `vpc_id = aws_vpc.main.id`).
+                Explicitly declare any required variables using `variable` blocks at the top of your output and reference them where appropriate.
+
+                If the user prompt does not require network resources, output exactly: # No network resources required.
+
+                User Request: {state.get('user_prompt')}
+        """
+    elif mode == "import":
+                mode_instructions = """
+                MODE: IMPORT EXISTING INFRASTRUCTURE
+                You are the NETWORK generation node.
+                Read the provided AWS input data. ONLY generate network-specific resources (VPCs, Subnets, IGWs, NAT, Route Tables) that match the input EXACTLY.
+                NEVER use `var.*` references. EXAMPLE WRONG: image_id = var.ami_id  EXAMPLE RIGHT: image_id = "ami-0c55b159cbfafe1f0"
+                EXAMPLE WRONG: instance_type = var.instance_type  EXAMPLE RIGHT: instance_type = "t3.micro"
+                EXAMPLE WRONG: Environment = var.environment  EXAMPLE RIGHT: Environment = "production"
+                ONLY use the exact hardcoded AWS IDs provided in the input JSON data (e.g., "vpc-12345", "subnet-67890"). If a resource is listed in the JSON but its ID is missing, use a placeholder.
+                STRICT SCOPE: You MUST ONLY generate resources that are explicitly present in the `aws_input_data`. If `aws_internet_gateway` is NOT present in the input JSON resources list, do NOT generate any `aws_internet_gateway` resource or any `import` block for it. Similarly, if only one subnet is present in the telemetry, do NOT generate a second subnet or any placeholders for it.
+                Do NOT generate or import Security Groups (aws_security_group) or IAM roles. Security Groups belong strictly to the SECURITY node.
+                Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
+                Example syntax:
+                import {{
+                    to = aws_vpc.main
+                    id = "vpc-12345"
+                }}
+                If the aws_input_data contains no network resources, output exactly: # No network resources required.
+                """
+    elif mode == "clone":
+                mode_instructions = """
+                MODE: CLONE INFRASTRUCTURE
+                You are the NETWORK generation node.
+                Read the provided AWS input data to understand the architecture. ONLY generate network-specific resources.
+                Replace hardcoded IDs from the JSON with `var.*` references and you MUST include corresponding `variable` declaration blocks for every variable you create.
+                Parameterize values using variables so this architecture can be deployed as a brand new copy in a different region.
+                Do NOT generate or import Security Groups (aws_security_group) or IAM roles. Security Groups belong strictly to the SECURITY node.
+                If the aws_input_data contains no network resources, output exactly: # No network resources required.
+                """
+
+    prompt = mode_instructions + "\n" + NETWORK_PROMPT
+
+    if mode == "new":
+        prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. NO VARIABLES ALLOWED: You are strictly FORBIDDEN from using ANY var.* references. You MUST hardcode ALL values. Hardcode cidr_blocks (e.g., '10.0.0.0/16') and tags (e.g., Environment = 'production').\n2. DEPENDENCIES & NAMING: You must strictly align resource names across files. The Network node MUST declare the VPC as 'resource \"aws_vpc\" \"main\"'. The Security node MUST declare the security group as 'resource \"aws_security_group\" \"main\"'. All cross-references must use 'aws_vpc.main.id' and 'aws_security_group.main.id'.\n3. BLOCK SYNTAX: Never use equals signs for repeatable configuration sub-blocks. Use 'attribute { ... }' instead of 'attribute = [ ... ]', and 'ingress { ... }' instead of 'ingress = [ ... ]'.\n4. DYNAMODB SYNTAX: If you generate an aws_dynamodb_table, you must define the 'hash_key'. You MUST set 'billing_mode = \"PAY_PER_REQUEST\"'. Do NOT specify 'read_capacity_units' or 'write_capacity_units'.\n5. AWS_EIP SYNTAX: For aws_eip, you MUST ONLY use 'domain = \"vpc\"'. Completely remove 'vpc = true'."
+    elif mode == "import":
+        prompt_user = (
+            "ABSOLUTE MANDATE FOR IMPORT MODE:\n"
+            "1. SCOPE: ONLY generate resources explicitly listed in aws_input_data. If the JSON only has an S3 bucket, generate ONLY an aws_s3_bucket. DO NOT generate aws_db_instance or aws_autoscaling_group unless they are in the JSON.\n"
+            "2. NO REFERENCES: NEVER use Terraform cross-references. WRONG: subnet_id = aws_subnet.sub-123.id. RIGHT: subnet_id = \"subnet-123\". MUST use string literals with quotes.\n"
+            "3. NO VARIABLES: NEVER use var.* syntax. WRONG: username = var.user. RIGHT: username = \"admin\". Hardcode all values.\n"
+            "4. DYNAMODB: If you generate an aws_dynamodb_table, you MUST set billing_mode = \"PAY_PER_REQUEST\" and you are strictly FORBIDDEN from specifying read_capacity_units or write_capacity_units.\n"
+            "5. NO DEFAULT TAGS: Do NOT add any default tags (like Environment, Owner, ManagedBy) if they are not explicitly present in the input JSON tags. ONLY copy the exact tags provided in the JSON telemetry. If the telemetry tags are empty, do NOT output a tags block at all."
+        )
+    else:  # clone
+        prompt_user = "ABSOLUTE MANDATE FOR CLONE MODE:\n1. PARAMETERIZATION: Replace hardcoded IDs and names from the aws_input_data JSON with var.* references.\n2. VARIABLE DECLARATION: You MUST explicitly output a 'variable \"...\" { default = \"...\" }' block with the original scanned value from the telemetry set as the default, for EVERY var.* reference you generate. Write these variable blocks AT THE VERY TOP of your output, inside the exact same HCL block as your resources. DO NOT omit them thinking they belong in a separate variables.tf file. YOU MUST WRITE THEM HERE.\nEXAMPLE REQUIRED OUTPUT:\nvariable \"vpc_cidr\" { default = \"10.0.0.0/16\" }\nresource \"aws_vpc\" \"main\" { cidr_block = var.vpc_cidr }\n\n3. SYNTAX: Do NOT generate 'aws_vpc_gateway_attachment' resources. Associate Internet Gateways directly by setting the 'vpc_id' argument inside the 'aws_internet_gateway' block.\n4. DOMAIN RESTRICTION: You are the NETWORK node. You MUST ONLY generate networking resources (VPCs, aws_subnet, IGWs, routing). Completely IGNORE any instances, security groups, or S3 buckets in the JSON."
+
+    # If there are validation results from a previous run, prepend them
+    val_errors = state.get("validation_results", "").replace("{", "{{").replace("}", "}}")
+    if val_errors:
+        prompt = val_errors + "\n" + prompt
+
+    hcl = call_cloud_llm(
+        prompt,
+        {
+            "aws_input_data": state.get("aws_input_data"),
+            "user_prompt": prompt_user,
+        },
+    )
     parse_and_write_files(hcl, phase_filename="network.tf")
     return {"network_hcl": hcl, "current_phase": "network"}
 
@@ -141,7 +191,7 @@ def generate_security_node(state: GraphState) -> dict:
     prompt = mode_instructions + "\n" + SECURITY_PROMPT
 
     if mode == "new":
-        prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. NO VARIABLES ALLOWED: You are strictly FORBIDDEN from using ANY var.* references. You MUST hardcode ALL values. Hardcode cidr_blocks (e.g., '10.0.0.0/16') and tags (e.g., Environment = 'production').\n2. DEPENDENCIES & NAMING: You must strictly align resource names across files. The Network node MUST declare the VPC as 'resource \"aws_vpc\" \"main\"'. The Security node MUST declare the security group as 'resource \"aws_security_group\" \"main\"'. All cross-references must use 'local.vpc_id' and 'aws_security_group.main.id'.\n3. BLOCK SYNTAX: Never use equals signs for repeatable configuration sub-blocks. Use 'attribute { ... }' instead of 'attribute = [ ... ]', and 'ingress { ... }' instead of 'ingress = [ ... ]'.\n4. DYNAMODB SYNTAX: If you generate an aws_dynamodb_table, you must define the 'hash_key'. If you specify 'read_capacity_units' and 'write_capacity_units', you MUST explicitly set 'billing_mode = \"PROVISIONED\"'.\n5. AWS_EIP SYNTAX: For aws_eip, you MUST ONLY use 'domain = \"vpc\"'. Completely remove 'vpc = true'."
+        prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. NO VARIABLES ALLOWED: You are strictly FORBIDDEN from using ANY var.* references. You MUST hardcode ALL values. Hardcode cidr_blocks (e.g., '10.0.0.0/16') and tags (e.g., Environment = 'production').\n2. DEPENDENCIES & NAMING: You must strictly align resource names across files. The Network node MUST declare the VPC as 'resource \"aws_vpc\" \"main\"'. The Security node MUST declare the security group as 'resource \"aws_security_group\" \"main\"'. All cross-references must use 'aws_vpc.main.id' and 'aws_security_group.main.id'.\n3. BLOCK SYNTAX: Never use equals signs for repeatable configuration sub-blocks. Use 'attribute { ... }' instead of 'attribute = [ ... ]', and 'ingress { ... }' instead of 'ingress = [ ... ]'.\n4. DYNAMODB SYNTAX: If you generate an aws_dynamodb_table, you must define the 'hash_key'. If you specify 'read_capacity_units' and 'write_capacity_units', you MUST explicitly set 'billing_mode = \"PROVISIONED\"'.\n5. AWS_EIP SYNTAX: For aws_eip, you MUST ONLY use 'domain = \"vpc\"'. Completely remove 'vpc = true'."
     elif mode == "import":
         prompt_user = (
             "ABSOLUTE MANDATE FOR IMPORT MODE:\n"
@@ -164,10 +214,8 @@ def generate_security_node(state: GraphState) -> dict:
             "aws_input_data": state.get("aws_input_data"),
             "user_prompt": prompt_user,
             "network_context": (
-                "An existing network configuration is available via dynamic local variables: "
-                "local.vpc_id (resolves to the active VPC ID) and local.subnet_ids (list of subnet IDs). "
-                "Use local.vpc_id and local.subnet_ids to bind resources dynamically. "
-                "DO NOT redeclare these networking variables or resources."
+                "An existing VPC named 'aws_vpc.main' and subnets 'aws_subnet.public_1' "
+                "and 'aws_subnet.private_1' are already declared. DO NOT rewrite them."
             ),
         },
     )
@@ -231,7 +279,7 @@ def generate_compute_node(state: GraphState) -> dict:
     prompt = mode_instructions + "\n" + COMPUTE_PROMPT
 
     if mode == "new":
-        prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. NO VARIABLES ALLOWED: You are strictly FORBIDDEN from using ANY var.* references. You MUST hardcode ALL values. Hardcode cidr_blocks (e.g., '10.0.0.0/16') and tags (e.g., Environment = 'production').\n2. DEPENDENCIES & NAMING: You must strictly align resource names across files. The Network node MUST declare the VPC as 'resource \"aws_vpc\" \"main\"'. The Security node MUST declare the security group as 'resource \"aws_security_group\" \"main\"'. All cross-references must use 'local.vpc_id' and 'aws_security_group.main.id'.\n3. BLOCK SYNTAX: Never use equals signs for repeatable configuration sub-blocks. Use 'attribute { ... }' instead of 'attribute = [ ... ]', and 'ingress { ... }' instead of 'ingress = [ ... ]'.\n4. DYNAMODB SYNTAX: If you generate an aws_dynamodb_table, you must define the 'hash_key'. You MUST set 'billing_mode = \"PAY_PER_REQUEST\"'. Do NOT specify 'read_capacity_units' or 'write_capacity_units'.\n5. AWS_EIP SYNTAX: For aws_eip, you MUST ONLY use 'domain = \"vpc\"'. Completely remove 'vpc = true'."
+        prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. NO VARIABLES ALLOWED: You are strictly FORBIDDEN from using ANY var.* references. You MUST hardcode ALL values. Hardcode cidr_blocks (e.g., '10.0.0.0/16') and tags (e.g., Environment = 'production').\n2. DEPENDENCIES & NAMING: You must strictly align resource names across files. The Network node MUST declare the VPC as 'resource \"aws_vpc\" \"main\"'. The Security node MUST declare the security group as 'resource \"aws_security_group\" \"main\"'. All cross-references must use 'aws_vpc.main.id' and 'aws_security_group.main.id'.\n3. BLOCK SYNTAX: Never use equals signs for repeatable configuration sub-blocks. Use 'attribute { ... }' instead of 'attribute = [ ... ]', and 'ingress { ... }' instead of 'ingress = [ ... ]'.\n4. DYNAMODB SYNTAX: If you generate an aws_dynamodb_table, you must define the 'hash_key'. You MUST set 'billing_mode = \"PAY_PER_REQUEST\"'. Do NOT specify 'read_capacity_units' or 'write_capacity_units'.\n5. AWS_EIP SYNTAX: For aws_eip, you MUST ONLY use 'domain = \"vpc\"'. Completely remove 'vpc = true'."
     elif mode == "import":
         prompt_user = (
             "ABSOLUTE MANDATE FOR IMPORT MODE:\n"
@@ -255,9 +303,9 @@ def generate_compute_node(state: GraphState) -> dict:
             "aws_input_data": state.get("aws_input_data"),
             "user_prompt": prompt_user,
             "network_context": (
-                "Available network references: local.vpc_id (resolves to the active VPC ID) "
-                "and local.subnet_ids (list of subnet IDs). Use these dynamic local variables to bind resources. "
-                "DO NOT declare these resource blocks or local variables again."
+                "Available infrastructure references: vpc_id = aws_vpc.main.id, "
+                "public_subnet_id = aws_subnet.public_1.id, private_subnet_id = aws_subnet.private_1.id. "
+                "DO NOT declare these resource blocks again."
             ),
             "security_context": (
                 "Available security references: security_group_id = aws_security_group.vpc_sg.id. "
@@ -267,10 +315,6 @@ def generate_compute_node(state: GraphState) -> dict:
     )
     parse_and_write_files(hcl, phase_filename="compute.tf")
     return {"compute_hcl": hcl, "current_phase": "compute"}
-
-
-
-
 
 
 def generate_data_node(state: GraphState) -> dict:
@@ -354,9 +398,9 @@ def generate_data_node(state: GraphState) -> dict:
             "aws_input_data": state.get("aws_input_data"),
             "user_prompt": prompt_user,
             "network_context": (
-                "Available network references: local.vpc_id (resolves to the active VPC ID) "
-                "and local.subnet_ids (list of subnet IDs). Use these dynamic local variables to bind resources. "
-                "DO NOT declare these resource blocks or local variables again."
+                "Available infrastructure references: vpc_id = aws_vpc.main.id, "
+                "public_subnet_id = aws_subnet.public_1.id, private_subnet_id = aws_subnet.private_1.id. "
+                "DO NOT declare these resource blocks again."
             ),
             "security_context": (
                 "Available security references: security_group_id = aws_security_group.vpc_sg.id. "
@@ -416,46 +460,105 @@ def validation_node_func(state: GraphState) -> dict:
         }
 
 
-def pre_flight_validation_node(state: GraphState) -> GraphState:
-    print("[Node] Running Pre-flight DAG Validation...")
-    dependencies = parse_hcl_dependencies()
-    state["dependency_map"] = dependencies
+def preflight_validation_node(state: GraphState) -> dict:
+    print("[Node] Running Pre-Flight Validation...")
+    workspace_dir = "terraform_workspace"
+    errors = []
 
-    # Save the dependency map as a JSON sidecar file in the workspace
-    manifest_path = os.path.join("terraform_workspace", "graph_manifest.json")
+    # 1. Python-Side AST/Dependency Graph validation
+    dependency_map = {}
+    cycles = []
+    missing_refs = []
     try:
-        os.makedirs(os.path.dirname(manifest_path), exist_ok=True)
-        with open(manifest_path, "w", encoding="utf-8") as f:
-            json.dump(dependencies, f, indent=4)
-        print("Dependency graph manifest saved to graph_manifest.json successfully.")
-    except Exception as e:
-        print(f"Failed to save graph_manifest.json: {e}")
-
-    visited = set()
-    recursion_stack = set()
-    
-    def detect_cycle(node):
-        visited.add(node)
-        recursion_stack.add(node)
-        for neighbor in dependencies.get(node, []):
-            if neighbor not in visited:
-                if detect_cycle(neighbor):
-                    return True
-            elif neighbor in recursion_stack:
-                return True
-        recursion_stack.remove(node)
-        return False
-
-    for resource in dependencies:
-        if resource not in visited:
-            if detect_cycle(resource):
-                raise ValueError(f"Pre-flight Validation Failed: Cyclic dependency involving {resource}.")
+        dependency_map = parse_dependencies(workspace_dir)
+        
+        # Check cycles
+        cycles = detect_cycles(dependency_map)
+        if cycles:
+            for cycle in cycles:
+                errors.append(f"Circular dependency detected: {' -> '.join(cycle)}")
                 
-    return state # Pass state forward if DAG is strictly acyclic
+        # Check missing references
+        missing_refs = find_missing_references(workspace_dir, dependency_map)
+        if missing_refs:
+            errors.extend(missing_refs)
+            
+    except Exception as e:
+        errors.append(f"Python-side dependency analysis failed: {str(e)}")
+
+    # 2. Native Tooling validation (execute terraform validate and generate graph)
+    if not SKIP_VALIDATE:
+        try:
+            # We run execute_terraform_validation (runs init & validate -json)
+            validation_result = execute_terraform_validation(workspace_dir)
+            if not validation_result.get("is_valid"):
+                validator_logs = validation_result.get("error_logs", [])
+                errors.extend(validator_logs)
+                
+            # Run terraform graph command
+            generate_terraform_graph(workspace_dir)
+            
+        except Exception as e:
+            errors.append(f"Native terraform CLI checks failed: {str(e)}")
+    else:
+        print("[Pre-Flight] SKIP_VALIDATE enabled; bypassing native validation checks.")
+
+    # 3. Save sidecar metadata asset graph_manifest.json
+    try:
+        manifest_path = os.path.join(workspace_dir, "graph_manifest.json")
+        manifest_data = {
+            "dependency_map": dependency_map,
+            "cycles": cycles,
+            "missing_references": missing_refs,
+            "errors": errors,
+            "is_valid": len(errors) == 0
+        }
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(manifest_data, f, indent=2)
+        print("[Pre-Flight] Saved graph_manifest.json sidecar metadata.")
+    except Exception as e:
+        print(f"[Pre-Flight] Failed to save graph_manifest.json: {e}")
+
+    # 4. Handle result in state
+    if len(errors) == 0:
+        print("[Pre-Flight] Pre-flight validation passed successfully.")
+        return {"is_valid": True}
+    else:
+        print(f"[Pre-Flight] Pre-flight validation failed with {len(errors)} errors.")
+        retry = state.get("retry_count", 0) + 1
+        
+        CRITICAL_RETRY_INSTRUCTION = (
+            "CRITICAL RETRY INSTRUCTION: Pre-flight validation failed due to broken dependencies or missing references. "
+            "Please ensure that all referenced resources exist in the generated config files, "
+            "and eliminate any circular dependencies."
+        )
+        joined_errors = "\n".join(errors)
+        validation_results = CRITICAL_RETRY_INSTRUCTION + "\n\n" + joined_errors
+        
+        # Merge error logs
+        state_errors = list(state.get("error_logs", []))
+        state_errors.extend(errors)
+        
+        return {
+            "is_valid": False,
+            "error_logs": state_errors,
+            "validation_results": validation_results,
+            "retry_count": retry,
+        }
 
 
-def generate_graph_node(state: GraphState) -> GraphState:
-    print("[Node] Generating visual dependency graph...")
-    workspace_path = "terraform_workspace"
-    generate_terraform_graph(workspace_path)
-    return state
+def preflight_routing_decision_router(state: GraphState) -> str:
+    """Route from preflight_validation to validate_code or retry."""
+    if state.get("is_valid"):
+        return "validate_code"
+        
+    if state.get("retry_count", 0) >= state.get("max_retries", 3):
+        print(
+            f"[Router] Pre-flight validation failed & Max retries ({state.get('max_retries')}) reached. Forcing exit."
+        )
+        return "complete"
+
+    # Route back to network to fix the full workflow
+    print("[Router] Pre-flight validation failed; routing back to network for full re-run.")
+    return "fix_network"
+

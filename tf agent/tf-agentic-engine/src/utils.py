@@ -40,13 +40,13 @@ SECURITY_PROMPT = f"""
 {COMMON_RULES}
 
 Generate the SECURITY layer only: security groups, network ACLs, IAM roles
-and policies. Use the provided `network_context` to reference `local.vpc_id`
-and subnet resources. Ensure security groups reference `local.vpc_id` and
+and policies. Use the provided `network_context` to reference `aws_vpc.main.id`
+and subnet resources. Ensure security groups reference `aws_vpc.main.id` and
 attach the standard `tags` block using `var.environment` and `var.owner`.
 
 CRITICAL SYNTAX RULES:
 1. Do NOT redefine or redeclare the `resource "aws_vpc" "main"` block — it must exist only in `network.tf`.
-2. Always reference the VPC using the exact attribute `local.vpc_id`.
+2. Always reference the VPC using the exact attribute `aws_vpc.main.id`.
 3. Do NOT emit naked top-level assignments; if local values are required wrap them inside `locals {{{{...}}}}`.
 4. Avoid duplicating security group names between runs; use fixed resource addressing.
 """
@@ -55,14 +55,14 @@ COMPUTE_PROMPT = f"""
 {COMMON_RULES}
 
 Generate the COMPUTE layer only: EC2 instances, launch templates, and
-auto-scaling groups. Reference `local.subnet_ids` or `local.vpc_id`
+auto-scaling groups. Reference `aws_subnet.public_1.id` or `aws_subnet.private_1.id`
 as appropriate and reference security groups by resource address. Use
 `var.instance_type` and `var.ami_id` rather than hardcoding values.
 Include placements across subnets as necessary.
 
 CRITICAL SYNTAX RULES:
 1. Do NOT redefine the VPC or any Security Groups — reference them by resource address only.
-2. Attach instances to subnets or specify subnets using `local.subnet_ids` (do not hardcode strings).
+2. Attach instances to subnets using `subnet_id = aws_subnet.public_1.id` (do not hardcode strings).
 3. Do NOT reference resources that are not declared (e.g., `aws_key_pair`), unless explicitly created within this compute phase.
 """
 
@@ -175,36 +175,6 @@ def clean_hcl_output(text: str) -> str:
     return content.strip()
 
 
-def extract_and_deduplicate_variables(content, variables_dict):
-    """
-    Extracts variable blocks from content, updates variables_dict with unique variable declarations,
-    and returns content with variable blocks removed.
-    """
-    lines = content.splitlines()
-    cleaned_lines = []
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        # Match variable definition
-        match = re.match(r'^\s*variable\s+"([^"]+)"\s*\{', line)
-        if match:
-            var_name = match.group(1)
-            # Capture the block
-            block_lines = [line]
-            brace_count = line.count('{') - line.count('}')
-            i += 1
-            while i < len(lines) and brace_count > 0:
-                l = lines[i]
-                brace_count += l.count('{') - l.count('}')
-                block_lines.append(l)
-                i += 1
-            variables_dict[var_name] = "\n".join(block_lines)
-            continue
-        cleaned_lines.append(line)
-        i += 1
-    return "\n".join(cleaned_lines)
-
-
 def parse_and_write_files(data, phase_filename=None):
     workspace_dir = "terraform_workspace"
     os.makedirs(workspace_dir, exist_ok=True)
@@ -223,29 +193,12 @@ def parse_and_write_files(data, phase_filename=None):
     elif isinstance(data, str) and phase_filename:
         files_to_write = {phase_filename: data}
 
-    # Load existing variables from variables.tf if it exists
-    variables_dict = {}
-    variables_tf_path = os.path.join(workspace_dir, "variables.tf")
-    if os.path.exists(variables_tf_path):
-        with open(variables_tf_path, "r", encoding="utf-8") as f:
-            existing_vars_content = f.read()
-        extract_and_deduplicate_variables(existing_vars_content, variables_dict)
-
     for filename, content in files_to_write.items():
         if content:
             cleaned_content = clean_hcl_output(content)
-            # Extract variables from this content
-            cleaned_content = extract_and_deduplicate_variables(cleaned_content, variables_dict)
-            
             filepath = os.path.join(workspace_dir, filename)
             with open(filepath, "w", encoding="utf-8") as f:
                 f.write(cleaned_content)
-
-    # Write deduplicated variables to variables.tf
-    if variables_dict:
-        variables_content = "\n\n".join(variables_dict.values())
-        with open(variables_tf_path, "w", encoding="utf-8") as f:
-            f.write(variables_content)
 
     return True
 
@@ -320,83 +273,114 @@ def execute_terraform_validation(workspace_dir: str = "terraform_workspace") -> 
         return {"is_valid": False, "error_logs": [val_result.stderr]}
 
 
-def parse_hcl_dependencies(workspace_path="terraform_workspace"):
-    dependency_map = {}
+def parse_dependencies(workspace_dir: str) -> dict:
+    """
+    Parses variables, local mappings, resources, and data blocks from 
+    all HCL (.tf) files in the workspace directory.
+    Constructs an internal map of resource dependencies.
+    """
+    import re
+    import glob
+    
     defined_resources = set()
     resource_blocks = {}
     
-    if not os.path.exists(workspace_path):
-        return {}
-        
-    tf_files = [f for f in os.listdir(workspace_path) if f.endswith('.tf')]
+    # Scan and find all resources and local/variable definitions
+    tf_files = glob.glob(os.path.join(workspace_dir, "*.tf"))
     
-    # 1. Parse all blocks (resources, datas, locals)
     for tf_file in tf_files:
-        file_path = os.path.join(workspace_path, tf_file)
-        with open(file_path, 'r', encoding='utf-8') as f:
-            content = f.read()
+        if not os.path.exists(tf_file):
+            continue
+        try:
+            with open(tf_file, "r", encoding="utf-8") as f:
+                content = f.read()
+        except Exception as e:
+            print(f"Failed to read {tf_file} for dependency parsing: {e}")
+            continue
             
-        lines = content.splitlines()
-        i = 0
-        while i < len(lines):
-            line = lines[i].strip()
-            # Ignore comments
-            if line.startswith('#') or line.startswith('//'):
-                i += 1
-                continue
-                
-            match = re.match(r'^(resource|data)\s+"([^"]+)"\s+"([^"]+)"\s*\{', line)
-            locals_match = re.match(r'^locals\s*\{', line)
+        # Extract variables
+        variables = re.findall(r'variable\s+"([^"]+)"\s*\{', content)
+        for var in variables:
+            full_name = f"var.{var}"
+            defined_resources.add(full_name)
+            resource_blocks[full_name] = ""
             
-            if match:
-                res_type, res_name = match.group(2), match.group(3)
-                full_name = f"{res_type}.{res_name}"
-                defined_resources.add(full_name)
-                
-                # Collect block content matching braces
-                block_lines = [line]
-                brace_count = 1
-                i += 1
-                while i < len(lines) and brace_count > 0:
-                    l = lines[i]
-                    brace_count += l.count('{') - l.count('}')
-                    block_lines.append(l)
-                    i += 1
-                resource_blocks[full_name] = "\n".join(block_lines)
-                continue
-                
-            elif locals_match:
-                block_lines = [line]
-                brace_count = 1
-                i += 1
-                while i < len(lines) and brace_count > 0:
-                    l = lines[i]
-                    brace_count += l.count('{') - l.count('}')
-                    block_lines.append(l)
-                    i += 1
-                
-                # Parse assignments within the locals block
-                for l in block_lines[1:-1]:
-                    l_strip = l.strip()
-                    if l_strip.startswith('#') or l_strip.startswith('//'):
-                        continue
-                    assign_match = re.match(r'^(\w+)\s*=\s*(.*)', l_strip)
-                    if assign_match:
-                        var_name = assign_match.group(1)
-                        var_val = assign_match.group(2)
-                        full_name = f"local.{var_name}"
-                        defined_resources.add(full_name)
-                        resource_blocks[full_name] = var_val
-                continue
-            i += 1
+        # Extract resources
+        for match in re.finditer(r'resource\s+"([^"]+)"\s+"([^"]+)"\s*\{', content):
+            res_type = match.group(1)
+            res_name = match.group(2)
+            full_name = f"{res_type}.{res_name}"
+            defined_resources.add(full_name)
             
-    # 2. Map resource/local variables to their referenced dependencies
+            # Extract block content by matching braces
+            start_idx = match.end() - 1
+            brace_count = 0
+            block_content = []
+            for char in content[start_idx:]:
+                block_content.append(char)
+                if char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        break
+            resource_blocks[full_name] = "".join(block_content)
+            
+        # Extract data sources
+        for match in re.finditer(r'data\s+"([^"]+)"\s+"([^"]+)"\s*\{', content):
+            res_type = match.group(1)
+            res_name = match.group(2)
+            full_name = f"data.{res_type}.{res_name}"
+            defined_resources.add(full_name)
+            
+            start_idx = match.end() - 1
+            brace_count = 0
+            block_content = []
+            for char in content[start_idx:]:
+                block_content.append(char)
+                if char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        break
+            resource_blocks[full_name] = "".join(block_content)
+            
+        # Extract locals
+        for match in re.finditer(r'locals\s*\{', content):
+            start_idx = match.end() - 1
+            brace_count = 0
+            block_content = []
+            for char in content[start_idx:]:
+                block_content.append(char)
+                if char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        break
+            locals_text = "".join(block_content)
+            
+            # Line by line parsing of local assignments
+            for line in locals_text.splitlines():
+                line_clean = line.strip()
+                if line_clean.startswith("#") or line_clean.startswith("//"):
+                    continue
+                assign_match = re.match(r'^([a-zA-Z0-9_-]+)\s*=\s*(.*)', line_clean)
+                if assign_match:
+                    var_name = assign_match.group(1)
+                    var_val = assign_match.group(2)
+                    full_name = f"local.{var_name}"
+                    defined_resources.add(full_name)
+                    resource_blocks[full_name] = var_val
+
+    # Map resources to their referenced dependencies
+    dependency_map = {}
     for res, block_text in resource_blocks.items():
         dependencies = set()
         for other_res in defined_resources:
             if other_res == res:
                 continue
-            # Look for references
             pattern = r'\b' + re.escape(other_res) + r'\b'
             if re.search(pattern, block_text):
                 dependencies.add(other_res)
@@ -405,25 +389,137 @@ def parse_hcl_dependencies(workspace_path="terraform_workspace"):
     return dependency_map
 
 
-def generate_terraform_graph(workspace_path):
+def find_missing_references(workspace_dir: str, dependency_map: dict) -> list:
+    """
+    Scans the resource blocks for any references of resources, variables, data sources,
+    or local values, and flags if those targets are NOT defined in our files.
+    """
+    import re
+    import glob
+
+    defined_keys = set(dependency_map.keys())
+    tf_files = glob.glob(os.path.join(workspace_dir, "*.tf"))
+    missing_errors = []
+
+    # Matches typical references:
+    # aws_vpc.main, var.vpc_id, local.vpc_id, data.aws_vpc.main
+    ref_pattern = r'\b((?:aws_[a-zA-Z0-9_-]+|var|local|data\.[a-zA-Z0-9_-]+)\.[a-zA-Z0-9_-]+)\b'
+
+    for tf_file in tf_files:
+        if not os.path.exists(tf_file):
+            continue
+        try:
+            with open(tf_file, "r", encoding="utf-8") as f:
+                content = f.read()
+        except Exception:
+            continue
+
+        for match in re.finditer(r'(resource|data)\s+"([^"]+)"\s+"([^"]+)"\s*\{', content):
+            res_type = match.group(1)
+            res_type_full = match.group(2)
+            res_name = match.group(3)
+            current_resource = f"{res_type_full}.{res_name}" if res_type == "resource" else f"data.{res_type_full}.{res_name}"
+
+            start_idx = match.end() - 1
+            brace_count = 0
+            block_content = []
+            for char in content[start_idx:]:
+                block_content.append(char)
+                if char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        break
+            block_text = "".join(block_content)
+
+            references = re.findall(ref_pattern, block_text)
+            for ref in references:
+                if ref == current_resource:
+                    continue
+                if ref.startswith("path.") or ref.startswith("each.") or ref.startswith("count."):
+                    continue
+                if ref not in defined_keys:
+                    missing_errors.append(
+                        f"Resource '{current_resource}' references '{ref}', but '{ref}' is not defined in the workspace."
+                    )
+
+    return missing_errors
+
+
+def detect_cycles(dependency_map: dict) -> list:
+    """
+    Detects circular dependencies in the dependency map using DFS.
+    Returns a list of cycle paths if any exist.
+    """
+    visited = {}  # 0 = unvisited, 1 = visiting, 2 = visited
+    cycles = []
+    
+    def dfs(node, path):
+        visited[node] = 1
+        for neighbor in dependency_map.get(node, []):
+            if neighbor not in dependency_map:
+                continue
+            if visited.get(neighbor, 0) == 1:
+                # Cycle detected
+                cycle_path = path + [neighbor]
+                try:
+                    cycle_start = cycle_path.index(neighbor)
+                    cycles.append(cycle_path[cycle_start:])
+                except ValueError:
+                    cycles.append(cycle_path)
+            elif visited.get(neighbor, 0) == 0:
+                dfs(neighbor, path + [neighbor])
+        visited[node] = 2
+
+    for node in dependency_map:
+        if visited.get(node, 0) == 0:
+            dfs(node, [node])
+            
+    return cycles
+
+
+def generate_terraform_graph(workspace_path: str) -> None:
+    """
+    Runs terraform init, generates a dependency graph DOT file, and tries
+    to convert it to PNG if graphviz is available.
+    """
     try:
-        # Generate the DOT file representing the execution plan
-        dot_file_path = os.path.join(workspace_path, "graph.dot")
+        project_root = os.path.abspath(os.path.join(workspace_path, ".."))
+        env = os.environ.copy()
+        env["TF_CLI_CONFIG_FILE"] = f"{project_root}{os.sep}.terraformrc"
+
+        subprocess.run(
+            ["terraform", "init", "-backend=false"],
+            cwd=workspace_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=True
+        )
+
+        dot_file_path = os.path.join(workspace_path, "dependency_graph.dot")
         with open(dot_file_path, "w", encoding="utf-8") as f:
             subprocess.run(
                 ["terraform", "graph", "-type=plan"], 
                 cwd=workspace_path, 
+                env=env,
                 stdout=f, 
+                timeout=15,
                 check=True
             )
         
-        # Convert the DOT file to a PNG
-        subprocess.run(
-            ["dot", "-Tpng", "graph.dot", "-o", "dependency_graph.png"], 
-            cwd=workspace_path, 
-            check=True
-        )
-        print("Dependency graph generated successfully.")
+        try:
+            subprocess.run(
+                ["dot", "-Tpng", "dependency_graph.dot", "-o", "dependency_graph.png"], 
+                cwd=workspace_path, 
+                capture_output=True,
+                check=True
+            )
+            print("Dependency graph PNG generated successfully.")
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            print("Graphviz 'dot' command not found or failed. Skipping PNG generation.")
         
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
         print(f"Graph generation failed: {e}")
