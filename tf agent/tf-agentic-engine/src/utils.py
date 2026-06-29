@@ -191,7 +191,7 @@ def extract_and_deduplicate_variables(content, variables_dict):
             var_name = match.group(1)
             # Capture the block
             block_lines = [line]
-            brace_count = 1
+            brace_count = line.count('{') - line.count('}')
             i += 1
             while i < len(lines) and brace_count > 0:
                 l = lines[i]

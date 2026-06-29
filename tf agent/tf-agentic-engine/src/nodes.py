@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 from src.state import GraphState, create_initial_state
 from src.utils import (
     call_cloud_llm,
@@ -419,6 +420,16 @@ def pre_flight_validation_node(state: GraphState) -> GraphState:
     print("[Node] Running Pre-flight DAG Validation...")
     dependencies = parse_hcl_dependencies()
     state["dependency_map"] = dependencies
+
+    # Save the dependency map as a JSON sidecar file in the workspace
+    manifest_path = os.path.join("terraform_workspace", "graph_manifest.json")
+    try:
+        os.makedirs(os.path.dirname(manifest_path), exist_ok=True)
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(dependencies, f, indent=4)
+        print("Dependency graph manifest saved to graph_manifest.json successfully.")
+    except Exception as e:
+        print(f"Failed to save graph_manifest.json: {e}")
 
     visited = set()
     recursion_stack = set()
