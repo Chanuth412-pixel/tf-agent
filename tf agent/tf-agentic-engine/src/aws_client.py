@@ -101,14 +101,40 @@ def fetch_live_infrastructure(region_name=None):
         sg_resp = ec2.describe_security_groups(Filters=sg_filter)
         for sg in sg_resp.get('SecurityGroups', []):
             if sg['GroupName'] != 'default': # Skip the default SG
+                ingress_rules = []
+                egress_rules = []
+                try:
+                    rules_resp = ec2.describe_security_group_rules(Filters=[{'Name': 'group-id', 'Values': [sg['GroupId']]}])
+                    for rule in rules_resp.get('SecurityGroupRules', []):
+                        rule_data = {
+                            "from_port": rule.get('FromPort', -1),
+                            "to_port": rule.get('ToPort', -1),
+                            "protocol": rule.get('IpProtocol', '-1'),
+                        }
+                        if rule.get('CidrIpv4'):
+                            rule_data['cidr_blocks'] = [rule['CidrIpv4']]
+                        if rule.get('CidrIpv6'):
+                            rule_data['ipv6_cidr_blocks'] = [rule['CidrIpv6']]
+                        if rule.get('ReferencedGroupInfo', {}).get('GroupId'):
+                            rule_data['security_groups'] = [rule['ReferencedGroupInfo']['GroupId']]
+                        
+                        if rule.get('IsEgress', False):
+                            egress_rules.append(rule_data)
+                        else:
+                            ingress_rules.append(rule_data)
+                except Exception as rules_err:
+                    logger.warning(f"Failed to fetch detailed rules for SG {sg['GroupId']}: {str(rules_err)}")
+                    ingress_rules = parse_ip_permissions(sg.get('IpPermissions', []))
+                    egress_rules = parse_ip_permissions(sg.get('IpPermissionsEgress', []))
+
                 resources.append({
                     "type": "aws_security_group",
                     "id": sg['GroupId'],
                     "name": sg['GroupName'],
                     "vpc_id": sg['VpcId'],
                     "description": sg.get('Description', ''),
-                    "ingress": parse_ip_permissions(sg.get('IpPermissions', [])),
-                    "egress": parse_ip_permissions(sg.get('IpPermissionsEgress', [])),
+                    "ingress": ingress_rules,
+                    "egress": egress_rules,
                     "tags": get_tags_dict(sg.get('Tags', []))
                 })
         
@@ -137,6 +163,7 @@ def fetch_live_infrastructure(region_name=None):
                     resources.append({
                         "type": "aws_instance",
                         "id": inst['InstanceId'],
+                        "image_id": inst.get('ImageId'),  # Grab the exact ImageId of the running instance
                         "instance_type": inst['InstanceType'],
                         "subnet_id": inst.get('SubnetId', 'Unknown'),
                         "tags": get_tags_dict(inst.get('Tags', []))
@@ -341,6 +368,36 @@ def test_fetcher_locally():
     # Create Security Groups
     sg_web = ec2.create_security_group(GroupName='web-traffic-sg', Description='Web traffic SG', VpcId=vpc_id)
     sg_db = ec2.create_security_group(GroupName='database-traffic-sg', Description='Database traffic SG', VpcId=vpc_id)
+    
+    # Authorize Security Group ingress rules
+    ec2.authorize_security_group_ingress(
+        GroupId=sg_web['GroupId'],
+        IpPermissions=[
+            {
+                'IpProtocol': 'tcp',
+                'FromPort': 80,
+                'ToPort': 80,
+                'IpRanges': [{'CidrIp': '0.0.0.0/0'}]
+            },
+            {
+                'IpProtocol': 'tcp',
+                'FromPort': 443,
+                'ToPort': 443,
+                'IpRanges': [{'CidrIp': '0.0.0.0/0'}]
+            }
+        ]
+    )
+    ec2.authorize_security_group_ingress(
+        GroupId=sg_db['GroupId'],
+        IpPermissions=[
+            {
+                'IpProtocol': 'tcp',
+                'FromPort': 5432,
+                'ToPort': 5432,
+                'UserIdGroupPairs': [{'GroupId': sg_web['GroupId']}]
+            }
+        ]
+    )
     
     # Create EC2 Instances
     ec2.run_instances(

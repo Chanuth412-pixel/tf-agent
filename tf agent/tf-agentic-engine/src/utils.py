@@ -175,68 +175,31 @@ def clean_hcl_output(text: str) -> str:
     return content.strip()
 
 
-def deduplicate_variables(workspace_dir: str) -> None:
+def consolidate_terraform_variables(hcl_files_dict):
     """
-    Scans all .tf files in the workspace (except variables.tf and provider.tf),
-    extracts variable definitions, removes them from the source files,
-    and writes them uniquely to a single variables.tf file to prevent duplicates.
+    Scans generated HCL strings, extracts all variable blocks, deduplicates them,
+    and creates a unified variables.tf string while cleaning the source files.
     """
-    import re
-    import glob
+    cleaned_files = {}
+    unique_variables = {}
     
-    variables_map = {}
-    tf_files = glob.glob(os.path.join(workspace_dir, "*.tf"))
-    
-    # 1. Read existing variables.tf if it exists to seed our variables map
-    variables_tf_path = os.path.join(workspace_dir, "variables.tf")
-    if os.path.exists(variables_tf_path):
-        try:
-            with open(variables_tf_path, "r", encoding="utf-8") as f:
-                var_content = f.read()
-            for match in re.finditer(r'variable\s+"([^"]+)"\s*\{', var_content):
-                var_name = match.group(1)
-                start_idx = match.end() - 1
-                brace_count = 0
-                block_content = []
-                for char in var_content[start_idx:]:
-                    block_content.append(char)
-                    if char == '{':
-                        brace_count += 1
-                    elif char == '}':
-                        brace_count -= 1
-                        if brace_count == 0:
-                            break
-                variables_map[var_name] = f'variable "{var_name}" ' + "".join(block_content)
-        except Exception as e:
-            print(f"Error reading variables.tf: {e}")
-
-    # 2. Scan other tf files to extract variable definitions
-    for tf_file in tf_files:
-        basename = os.path.basename(tf_file)
-        if basename in ["variables.tf", "provider.tf"]:
+    for filename, hcl_string in hcl_files_dict.items():
+        if filename == "provider.tf":
+            cleaned_files[filename] = hcl_string
             continue
             
-        if not os.path.exists(tf_file):
-            continue
-            
-        try:
-            with open(tf_file, "r", encoding="utf-8") as f:
-                content = f.read()
-        except Exception:
-            continue
-            
-        modified = False
-        new_content = content
+        clean_hcl = hcl_string
+        # Use regex to find variable declarations, then use brace matching to extract the entire block
+        matches = list(re.finditer(r'variable\s+"([^"]+)"\s*\{', clean_hcl))
         
-        matches = list(re.finditer(r'variable\s+"([^"]+)"\s*\{', new_content))
+        # Process in reverse to delete without corrupting indices
         for match in reversed(matches):
             var_name = match.group(1)
             start_idx = match.end() - 1
             brace_count = 0
             block_content = []
-            
             has_ended = False
-            for char in new_content[start_idx:]:
+            for char in clean_hcl[start_idx:]:
                 block_content.append(char)
                 if char == '{':
                     brace_count += 1
@@ -248,28 +211,24 @@ def deduplicate_variables(workspace_dir: str) -> None:
             
             if has_ended:
                 block_str = "".join(block_content)
-                variables_map[var_name] = f'variable "{var_name}" ' + block_str
+                full_block = f'variable "{var_name}" ' + block_str
+                
+                # Save it if we haven't seen it yet
+                if var_name not in unique_variables:
+                    unique_variables[var_name] = full_block
+                
+                # Remove it from the current file string
                 end_idx = start_idx + len(block_str)
                 block_start = match.start()
-                new_content = new_content[:block_start] + new_content[end_idx:]
-                modified = True
+                clean_hcl = clean_hcl[:block_start] + clean_hcl[end_idx:]
                 
-        if modified:
-            try:
-                with open(tf_file, "w", encoding="utf-8") as f:
-                    f.write(new_content.strip() + "\n")
-            except Exception as e:
-                print(f"Error writing updated {tf_file}: {e}")
-
-    # 3. Write all collected unique variables to variables.tf
-    if variables_map:
-        try:
-            sorted_vars = sorted(variables_map.items())
-            variables_tf_content = "\n\n".join(val for name, val in sorted_vars)
-            with open(variables_tf_path, "w", encoding="utf-8") as f:
-                f.write(variables_tf_content.strip() + "\n")
-        except Exception as e:
-            print(f"Error writing variables.tf: {e}")
+        cleaned_files[filename] = clean_hcl.strip()
+        
+    # Combine all unique variables into a single string (sorted alphabetically for clean output)
+    sorted_vars = sorted(unique_variables.items())
+    variables_tf_content = "\n\n".join(val for name, val in sorted_vars)
+    
+    return cleaned_files, variables_tf_content
 
 
 def deduplicate_resources(workspace_dir: str) -> None:
@@ -351,28 +310,59 @@ def parse_and_write_files(data, phase_filename=None):
     workspace_dir = "terraform_workspace"
     os.makedirs(workspace_dir, exist_ok=True)
 
-    files_to_write = {}
+    # 1. Gather all files in the workspace (read existing ones so we have the global context)
+    all_files = {
+        "network.tf": "",
+        "security.tf": "",
+        "compute.tf": "",
+        "data.tf": "",
+        "variables.tf": ""
+    }
+    
+    # Read what's currently in the workspace
+    for filename in all_files.keys():
+        filepath = os.path.join(workspace_dir, filename)
+        if os.path.exists(filepath):
+            try:
+                with open(filepath, "r", encoding="utf-8") as f:
+                    all_files[filename] = f.read()
+            except Exception:
+                pass
 
-    # Handle full state dictionary (if called by the validator or main graph)
+    # 2. Update with the new generated HCL contents
     if isinstance(data, dict):
-        files_to_write = {
-            "network.tf": data.get("network_hcl", ""),
-            "security.tf": data.get("security_hcl", ""),
-            "compute.tf": data.get("compute_hcl", ""),
-            "data.tf": data.get("data_hcl", "")
-        }
-    # Handle single file generation (called directly by individual nodes)
+        if data.get("network_hcl"): all_files["network.tf"] = clean_hcl_output(data.get("network_hcl"))
+        if data.get("security_hcl"): all_files["security.tf"] = clean_hcl_output(data.get("security_hcl"))
+        if data.get("compute_hcl"): all_files["compute.tf"] = clean_hcl_output(data.get("compute_hcl"))
+        if data.get("data_hcl"): all_files["data.tf"] = clean_hcl_output(data.get("data_hcl"))
     elif isinstance(data, str) and phase_filename:
-        files_to_write = {phase_filename: data}
+        if phase_filename in all_files:
+            all_files[phase_filename] = clean_hcl_output(data)
 
-    for filename, content in files_to_write.items():
-        if content:
-            cleaned_content = clean_hcl_output(content)
-            filepath = os.path.join(workspace_dir, filename)
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write(cleaned_content)
+    # 3. Consolidate variables using the post-processing filter
+    cleaned_files, variables_tf_content = consolidate_terraform_variables(all_files)
+    
+    # Update variables.tf content in our dictionary
+    cleaned_files["variables.tf"] = variables_tf_content
 
-    deduplicate_variables(workspace_dir)
+    # 4. Write all cleaned files to disk
+    for filename, content in cleaned_files.items():
+        filepath = os.path.join(workspace_dir, filename)
+        if content.strip():
+            try:
+                with open(filepath, "w", encoding="utf-8") as f:
+                    f.write(content.strip() + "\n")
+            except Exception as e:
+                print(f"Error writing file {filename}: {e}")
+        else:
+            # If the file became empty (e.g. variables.tf is empty), delete it if it exists
+            if os.path.exists(filepath):
+                try:
+                    os.remove(filepath)
+                except Exception:
+                    pass
+
+    # Deduplicate resources across the newly written files
     deduplicate_resources(workspace_dir)
     return True
 
