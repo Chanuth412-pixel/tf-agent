@@ -9,8 +9,6 @@ from src.nodes import (
     generate_data_node,
     validation_node_func,
     routing_decision_router,
-    preflight_validation_node,
-    preflight_routing_decision_router,
 )
 
 
@@ -22,7 +20,6 @@ def build_workflow() -> Any:
     workflow.add_node("generate_security", generate_security_node)
     workflow.add_node("generate_compute", generate_compute_node)
     workflow.add_node("generate_data", generate_data_node)
-    workflow.add_node("preflight_validation", preflight_validation_node)
     workflow.add_node("validate_code", validation_node_func)
 
     workflow.set_entry_point("generate_network")
@@ -31,21 +28,7 @@ def build_workflow() -> Any:
     workflow.add_edge("generate_network", "generate_security")
     workflow.add_edge("generate_security", "generate_compute")
     workflow.add_edge("generate_compute", "generate_data")
-    workflow.add_edge("generate_data", "preflight_validation")
-
-    # Conditional router after preflight validation
-    workflow.add_conditional_edges(
-        "preflight_validation",
-        preflight_routing_decision_router,
-        {
-            "fix_network": "generate_network",
-            "fix_security": "generate_security",
-            "fix_compute": "generate_compute",
-            "fix_data": "generate_data",
-            "validate_code": "validate_code",
-            "complete": END,
-        },
-    )
+    workflow.add_edge("generate_data", "validate_code")
 
     # Conditional router after validation (map fix_<phase> -> generate_<phase>)
     workflow.add_conditional_edges(

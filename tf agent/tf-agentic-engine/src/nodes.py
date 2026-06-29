@@ -1,6 +1,5 @@
 import os
 import sys
-import json
 from src.state import GraphState, create_initial_state
 from src.utils import (
     call_cloud_llm,
@@ -10,10 +9,6 @@ from src.utils import (
     SECURITY_PROMPT,
     COMPUTE_PROMPT,
     DATA_PROMPT,
-    parse_dependencies,
-    find_missing_references,
-    detect_cycles,
-    generate_terraform_graph,
 )
 
 
@@ -458,107 +453,3 @@ def validation_node_func(state: GraphState) -> dict:
             "validation_results": validation_results,
             "retry_count": retry,
         }
-
-
-def preflight_validation_node(state: GraphState) -> dict:
-    print("[Node] Running Pre-Flight Validation...")
-    workspace_dir = "terraform_workspace"
-    errors = []
-
-    # 1. Python-Side AST/Dependency Graph validation
-    dependency_map = {}
-    cycles = []
-    missing_refs = []
-    try:
-        dependency_map = parse_dependencies(workspace_dir)
-        
-        # Check cycles
-        cycles = detect_cycles(dependency_map)
-        if cycles:
-            for cycle in cycles:
-                errors.append(f"Circular dependency detected: {' -> '.join(cycle)}")
-                
-        # Check missing references
-        missing_refs = find_missing_references(workspace_dir, dependency_map)
-        if missing_refs:
-            errors.extend(missing_refs)
-            
-    except Exception as e:
-        errors.append(f"Python-side dependency analysis failed: {str(e)}")
-
-    # 2. Native Tooling validation (execute terraform validate and generate graph)
-    if not SKIP_VALIDATE:
-        try:
-            # We run execute_terraform_validation (runs init & validate -json)
-            validation_result = execute_terraform_validation(workspace_dir)
-            if not validation_result.get("is_valid"):
-                validator_logs = validation_result.get("error_logs", [])
-                errors.extend(validator_logs)
-                
-            # Run terraform graph command
-            generate_terraform_graph(workspace_dir)
-            
-        except Exception as e:
-            errors.append(f"Native terraform CLI checks failed: {str(e)}")
-    else:
-        print("[Pre-Flight] SKIP_VALIDATE enabled; bypassing native validation checks.")
-
-    # 3. Save sidecar metadata asset graph_manifest.json
-    try:
-        manifest_path = os.path.join(workspace_dir, "graph_manifest.json")
-        manifest_data = {
-            "dependency_map": dependency_map,
-            "cycles": cycles,
-            "missing_references": missing_refs,
-            "errors": errors,
-            "is_valid": len(errors) == 0
-        }
-        with open(manifest_path, "w", encoding="utf-8") as f:
-            json.dump(manifest_data, f, indent=2)
-        print("[Pre-Flight] Saved graph_manifest.json sidecar metadata.")
-    except Exception as e:
-        print(f"[Pre-Flight] Failed to save graph_manifest.json: {e}")
-
-    # 4. Handle result in state
-    if len(errors) == 0:
-        print("[Pre-Flight] Pre-flight validation passed successfully.")
-        return {"is_valid": True}
-    else:
-        print(f"[Pre-Flight] Pre-flight validation failed with {len(errors)} errors.")
-        retry = state.get("retry_count", 0) + 1
-        
-        CRITICAL_RETRY_INSTRUCTION = (
-            "CRITICAL RETRY INSTRUCTION: Pre-flight validation failed due to broken dependencies or missing references. "
-            "Please ensure that all referenced resources exist in the generated config files, "
-            "and eliminate any circular dependencies."
-        )
-        joined_errors = "\n".join(errors)
-        validation_results = CRITICAL_RETRY_INSTRUCTION + "\n\n" + joined_errors
-        
-        # Merge error logs
-        state_errors = list(state.get("error_logs", []))
-        state_errors.extend(errors)
-        
-        return {
-            "is_valid": False,
-            "error_logs": state_errors,
-            "validation_results": validation_results,
-            "retry_count": retry,
-        }
-
-
-def preflight_routing_decision_router(state: GraphState) -> str:
-    """Route from preflight_validation to validate_code or retry."""
-    if state.get("is_valid"):
-        return "validate_code"
-        
-    if state.get("retry_count", 0) >= state.get("max_retries", 3):
-        print(
-            f"[Router] Pre-flight validation failed & Max retries ({state.get('max_retries')}) reached. Forcing exit."
-        )
-        return "complete"
-
-    # Route back to network to fix the full workflow
-    print("[Router] Pre-flight validation failed; routing back to network for full re-run.")
-    return "fix_network"
-
