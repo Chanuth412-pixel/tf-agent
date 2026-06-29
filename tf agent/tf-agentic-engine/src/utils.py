@@ -175,6 +175,36 @@ def clean_hcl_output(text: str) -> str:
     return content.strip()
 
 
+def extract_and_deduplicate_variables(content, variables_dict):
+    """
+    Extracts variable blocks from content, updates variables_dict with unique variable declarations,
+    and returns content with variable blocks removed.
+    """
+    lines = content.splitlines()
+    cleaned_lines = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        # Match variable definition
+        match = re.match(r'^\s*variable\s+"([^"]+)"\s*\{', line)
+        if match:
+            var_name = match.group(1)
+            # Capture the block
+            block_lines = [line]
+            brace_count = 1
+            i += 1
+            while i < len(lines) and brace_count > 0:
+                l = lines[i]
+                brace_count += l.count('{') - l.count('}')
+                block_lines.append(l)
+                i += 1
+            variables_dict[var_name] = "\n".join(block_lines)
+            continue
+        cleaned_lines.append(line)
+        i += 1
+    return "\n".join(cleaned_lines)
+
+
 def parse_and_write_files(data, phase_filename=None):
     workspace_dir = "terraform_workspace"
     os.makedirs(workspace_dir, exist_ok=True)
@@ -193,12 +223,29 @@ def parse_and_write_files(data, phase_filename=None):
     elif isinstance(data, str) and phase_filename:
         files_to_write = {phase_filename: data}
 
+    # Load existing variables from variables.tf if it exists
+    variables_dict = {}
+    variables_tf_path = os.path.join(workspace_dir, "variables.tf")
+    if os.path.exists(variables_tf_path):
+        with open(variables_tf_path, "r", encoding="utf-8") as f:
+            existing_vars_content = f.read()
+        extract_and_deduplicate_variables(existing_vars_content, variables_dict)
+
     for filename, content in files_to_write.items():
         if content:
             cleaned_content = clean_hcl_output(content)
+            # Extract variables from this content
+            cleaned_content = extract_and_deduplicate_variables(cleaned_content, variables_dict)
+            
             filepath = os.path.join(workspace_dir, filename)
             with open(filepath, "w", encoding="utf-8") as f:
                 f.write(cleaned_content)
+
+    # Write deduplicated variables to variables.tf
+    if variables_dict:
+        variables_content = "\n\n".join(variables_dict.values())
+        with open(variables_tf_path, "w", encoding="utf-8") as f:
+            f.write(variables_content)
 
     return True
 
