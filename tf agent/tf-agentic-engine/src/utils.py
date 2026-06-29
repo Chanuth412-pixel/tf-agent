@@ -430,7 +430,47 @@ def execute_terraform_validation(workspace_dir: str = "terraform_workspace") -> 
         return {"is_valid": False, "error_logs": ["Validation timed out."]}
 
     if val_result.returncode == 0:
-        return {"is_valid": True, "error_logs": []}
+        # 4.5. Run plan-time semantic validation
+        try:
+            plan_result = subprocess.run(
+                ["terraform", "plan"],
+                cwd=workspace_dir,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if plan_result.returncode != 0:
+                plan_err = plan_result.stderr or plan_result.stdout
+                errors = []
+                in_error = False
+                current_err = []
+                for line in plan_err.splitlines():
+                    if "Error:" in line or "│ Error:" in line:
+                        in_error = True
+                        current_err.append(line.strip())
+                    elif in_error:
+                        if line.strip() == "" or line.startswith("╵"):
+                            errors.append("\n".join(current_err))
+                            current_err = []
+                            in_error = False
+                        else:
+                            current_err.append(line.strip())
+                if current_err:
+                    errors.append("\n".join(current_err))
+                
+                if errors:
+                    return {"is_valid": False, "error_logs": errors}
+                else:
+                    return {"is_valid": False, "error_logs": [plan_err.strip()]}
+            else:
+                return {"is_valid": True, "error_logs": []}
+        except subprocess.TimeoutExpired:
+            return {"is_valid": False, "error_logs": ["Plan timed out."]}
+        except Exception as e:
+            # Fall back to validate success if plan command fails due to environment-level issues
+            print(f"[Validator] Warning: terraform plan check failed/skipped: {e}")
+            return {"is_valid": True, "error_logs": []}
 
     # 5. Parse JSON semantic errors to feed back to the LLM
     try:
