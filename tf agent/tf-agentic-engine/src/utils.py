@@ -150,7 +150,15 @@ Your entire output must be parseable by the `terraform fmt` command.
     # The base system instruction enforces only HCL-only output and no prose.
 
     full_prompt = BASE_SYSTEM_INSTRUCTION + "\n" + prompt_template
-    prompt = ChatPromptTemplate.from_template(full_prompt)
+    
+    # Escape all curly braces to avoid LangChain formatting issues
+    escaped_prompt = full_prompt.replace("{", "{{").replace("}", "}}")
+    
+    # Restore only the placeholders that correspond to input_variables keys
+    for key in input_variables.keys():
+        escaped_prompt = escaped_prompt.replace(f"{{{{{key}}}}}", f"{{{key}}}")
+        
+    prompt = ChatPromptTemplate.from_template(escaped_prompt)
     chain = prompt | llm
     print(f"    [LLM] Sending request to local Ollama ({MODEL_NAME}) with num_ctx={NUM_CTX}...")
     response = chain.invoke(input_variables)
