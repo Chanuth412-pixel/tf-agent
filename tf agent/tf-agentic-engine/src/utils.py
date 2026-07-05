@@ -79,7 +79,7 @@ CRITICAL AWS PROVIDER V5 RULES:
 1. NEVER put 'versioning', 'server_side_encryption', or 'acl' inside the 'aws_s3_bucket' block.
 2. If you need versioning, create a SEPARATE resource: 'aws_s3_bucket_versioning'.
 3. If you need encryption, create a SEPARATE resource: 'aws_s3_bucket_server_side_encryption_configuration'.
-4. NEVER place 'subnet_ids' directly inside an 'aws_db_instance' resource block. When network subnets are provided for a database, always generate a separate 'aws_db_subnet_group' resource and link it to the database instance using the 'db_subnet_group_name' attribute.
+4. NEVER place 'subnet_ids' directly inside an 'aws_db_instance' resource block. When network subnets are provided for a database, always generate a separate 'aws_db_subnet_group' resource and link it to the database instance using the 'db_subnet_group_name' attribute. Never use the name "default" for an aws_db_subnet_group. Always generate a descriptive name based on the environment or database identifier (e.g., "main-db-subnet-group"). When creating an aws_db_subnet_group, you must only populate the subnet_ids array using the exact resource addresses/IDs of aws_subnet resources that already exist in the provided network state. Do not invent new subnet IDs.
 If you violate these rules, the system will crash.
 """
 
