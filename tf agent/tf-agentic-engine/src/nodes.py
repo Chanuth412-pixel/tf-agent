@@ -79,10 +79,21 @@ def generate_network_node(state: GraphState) -> dict:
                 STRICT SCOPE: You MUST ONLY generate resources that are explicitly present in the `aws_input_data`. If `aws_internet_gateway` is NOT present in the input JSON resources list, do NOT generate any `aws_internet_gateway` resource or any `import` block for it. Similarly, if only one subnet is present in the telemetry, do NOT generate a second subnet or any placeholders for it.
                 Do NOT generate or import Security Groups (aws_security_group) or IAM roles. Security Groups belong strictly to the SECURITY node.
                 Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
-                Example syntax:
+                CRITICAL IMPORT BLOCK RULES:
+                For every resource generated, you MUST output a corresponding 'import' block.
+                You must extract the correct identifying string from the input JSON based on this strict mapping matrix:
+
+                1. aws_vpc -> Use the 'VpcId' (e.g., vpc-12345)
+                2. aws_subnet -> Use the 'SubnetId' (e.g., subnet-67890)
+                3. aws_security_group -> Use the 'GroupId' (e.g., sg-11111)
+                4. aws_instance -> Use the 'InstanceId' (e.g., i-22222)
+                5. aws_db_instance -> Use the DB 'DBInstanceIdentifier' name, NOT the ARN.
+                6. aws_db_subnet_group -> Use the 'DBSubnetGroupName' string.
+
+                Format the import block exactly like this at the top of the file:
                 import {{
-                    to = aws_vpc.main
-                    id = "vpc-12345"
+                  to = resource_type.local_name
+                  id = "EXACT_MAPPED_STRING"
                 }}
                 If the aws_input_data contains no network resources, output exactly: # No network resources required.
                 """
@@ -108,7 +119,21 @@ def generate_network_node(state: GraphState) -> dict:
             "2. NO REFERENCES: NEVER use Terraform cross-references. WRONG: subnet_id = aws_subnet.sub-123.id. RIGHT: subnet_id = \"subnet-123\". MUST use string literals with quotes.\n"
             "3. NO VARIABLES: NEVER use var.* syntax. WRONG: username = var.user. RIGHT: username = \"admin\". Hardcode all values.\n"
             "4. DYNAMODB: If you generate an aws_dynamodb_table, you MUST set billing_mode = \"PAY_PER_REQUEST\" and you are strictly FORBIDDEN from specifying read_capacity_units or write_capacity_units.\n"
-            "5. NO DEFAULT TAGS: Do NOT add any default tags (like Environment, Owner, ManagedBy) if they are not explicitly present in the input JSON tags. ONLY copy the exact tags provided in the JSON telemetry. If the telemetry tags are empty, do NOT output a tags block at all."
+            "5. NO DEFAULT TAGS: Do NOT add any default tags (like Environment, Owner, ManagedBy) if they are not explicitly present in the input JSON tags. ONLY copy the exact tags provided in the JSON telemetry. If the telemetry tags are empty, do NOT output a tags block at all.\n"
+            "6. CRITICAL IMPORT BLOCK RULES:\n"
+            "   For every resource generated, you MUST output a corresponding 'import' block.\n"
+            "   You must extract the correct identifying string from the input JSON based on this strict mapping matrix:\n"
+            "   1. aws_vpc -> Use the 'VpcId' (e.g., vpc-12345)\n"
+            "   2. aws_subnet -> Use the 'SubnetId' (e.g., subnet-67890)\n"
+            "   3. aws_security_group -> Use the 'GroupId' (e.g., sg-11111)\n"
+            "   4. aws_instance -> Use the 'InstanceId' (e.g., i-22222)\n"
+            "   5. aws_db_instance -> Use the DB 'DBInstanceIdentifier' name, NOT the ARN.\n"
+            "   6. aws_db_subnet_group -> Use the 'DBSubnetGroupName' string.\n\n"
+            "   Format the import block exactly like this at the top of the file:\n"
+            "   import {\n"
+            "     to = resource_type.local_name\n"
+            "     id = \"EXACT_MAPPED_STRING\"\n"
+            "   }"
         )
     else:  # clone
         prompt_user = "ABSOLUTE MANDATE FOR CLONE MODE:\n1. PARAMETERIZATION: Replace hardcoded IDs and names from the aws_input_data JSON with var.* references.\n2. VARIABLE DECLARATION: You MUST explicitly output a 'variable \"...\" { default = \"...\" }' block with the original scanned value from the telemetry set as the default, for EVERY var.* reference you generate. Write these variable blocks AT THE VERY TOP of your output, inside the exact same HCL block as your resources. DO NOT omit them thinking they belong in a separate variables.tf file. YOU MUST WRITE THEM HERE.\nEXAMPLE REQUIRED OUTPUT:\nvariable \"vpc_cidr\" { default = \"10.0.0.0/16\" }\nresource \"aws_vpc\" \"main\" { cidr_block = var.vpc_cidr }\n\n3. SYNTAX: Do NOT generate 'aws_vpc_gateway_attachment' resources. Associate Internet Gateways directly by setting the 'vpc_id' argument inside the 'aws_internet_gateway' block.\n4. DOMAIN RESTRICTION: You are the NETWORK node. You MUST ONLY generate networking resources (VPCs, aws_subnet, IGWs, routing). Completely IGNORE any instances, security groups, or S3 buckets in the JSON."
@@ -166,13 +191,24 @@ def generate_security_node(state: GraphState) -> dict:
                 EXAMPLE WRONG: Environment = var.environment  EXAMPLE RIGHT: Environment = "production"
                 ONLY use the exact hardcoded AWS IDs provided in the input JSON data. IF an ID is missing, use a placeholder string.
                 Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
+                CRITICAL IMPORT BLOCK RULES:
+                For every resource generated, you MUST output a corresponding 'import' block.
+                You must extract the correct identifying string from the input JSON based on this strict mapping matrix:
+
+                1. aws_vpc -> Use the 'VpcId' (e.g., vpc-12345)
+                2. aws_subnet -> Use the 'SubnetId' (e.g., subnet-67890)
+                3. aws_security_group -> Use the 'GroupId' (e.g., sg-11111)
+                4. aws_instance -> Use the 'InstanceId' (e.g., i-22222)
+                5. aws_db_instance -> Use the DB 'DBInstanceIdentifier' name, NOT the ARN.
+                6. aws_db_subnet_group -> Use the 'DBSubnetGroupName' string.
+
+                Format the import block exactly like this at the top of the file:
+                import {{
+                  to = resource_type.local_name
+                  id = "EXACT_MAPPED_STRING"
+                }}
                 CRITICAL: For aws_iam_role, the import `id` MUST be the Role Name (e.g., "my-role-name"), NOT the full ARN.
                 NO DEFAULT TAGS: Do NOT add any default tags (like Environment, Owner, ManagedBy) if they are not explicitly present in the input JSON tags. ONLY copy the exact tags provided in the JSON telemetry. If the telemetry tags are empty, do NOT output a tags block at all.
-                Example syntax:
-                import {{
-                    to = aws_security_group.vpc_sg
-                    id = "sg-12345"
-                }}
                 If the aws_input_data contains no security resources, output exactly: # No security resources required.
                 """
     elif mode == "clone":
@@ -194,7 +230,21 @@ def generate_security_node(state: GraphState) -> dict:
             "1. SCOPE: ONLY generate resources explicitly listed in aws_input_data. If the JSON only has an S3 bucket, generate ONLY an aws_s3_bucket. DO NOT generate aws_db_instance or aws_autoscaling_group unless they are in the JSON.\n"
             "2. NO REFERENCES: NEVER use Terraform cross-references. WRONG: subnet_id = aws_subnet.sub-123.id. RIGHT: subnet_id = \"subnet-123\". MUST use string literals with quotes.\n"
             "3. NO VARIABLES: NEVER use var.* syntax. WRONG: username = var.user. RIGHT: username = \"admin\". Hardcode all values.\n"
-            "4. IAM ROLES: When generating an aws_iam_role, you MUST define the required 'assume_role_policy' using a standard EC2 service trust policy document inside jsonencode."
+            "4. IAM ROLES: When generating an aws_iam_role, you MUST define the required 'assume_role_policy' using a standard EC2 service trust policy document inside jsonencode.\n"
+            "5. CRITICAL IMPORT BLOCK RULES:\n"
+            "   For every resource generated, you MUST output a corresponding 'import' block.\n"
+            "   You must extract the correct identifying string from the input JSON based on this strict mapping matrix:\n"
+            "   1. aws_vpc -> Use the 'VpcId' (e.g., vpc-12345)\n"
+            "   2. aws_subnet -> Use the 'SubnetId' (e.g., subnet-67890)\n"
+            "   3. aws_security_group -> Use the 'GroupId' (e.g., sg-11111)\n"
+            "   4. aws_instance -> Use the 'InstanceId' (e.g., i-22222)\n"
+            "   5. aws_db_instance -> Use the DB 'DBInstanceIdentifier' name, NOT the ARN.\n"
+            "   6. aws_db_subnet_group -> Use the 'DBSubnetGroupName' string.\n\n"
+            "   Format the import block exactly like this at the top of the file:\n"
+            "   import {\n"
+            "     to = resource_type.local_name\n"
+            "     id = \"EXACT_MAPPED_STRING\"\n"
+            "   }"
         )
     else:  # clone
         prompt_user = "ABSOLUTE MANDATE FOR CLONE MODE:\n1. PARAMETERIZATION: Replace hardcoded IDs and names from the aws_input_data JSON with var.* references.\n2. VARIABLE DECLARATION: You MUST explicitly output a 'variable \"...\" { default = \"...\" }' block with the original scanned value from the telemetry set as the default, for EVERY var.* reference you generate. Write these variable blocks AT THE VERY TOP of your output, inside the exact same HCL block as your resources. DO NOT omit them thinking they belong in a separate variables.tf file. YOU MUST WRITE THEM HERE.\nEXAMPLE REQUIRED OUTPUT:\nvariable \"vpc_id\" { default = \"vpc-12345\" }\nresource \"aws_security_group\" \"main\" { vpc_id = var.vpc_id }\n\n3. SYNTAX: Do NOT generate 'aws_vpc_gateway_attachment' resources. Associate Internet Gateways directly by setting the 'vpc_id' argument inside the 'aws_internet_gateway' block.\n4. DOMAIN RESTRICTION: You are the SECURITY node. You MUST ONLY generate security resources (aws_security_group, IAM). Completely IGNORE any subnets, instances, or S3 buckets in the JSON. CRITICAL: Because Security Groups require a VPC, you will likely parameterize the vpc_id. You MUST explicitly declare variable blocks with defaults (e.g. `variable \"vpc_id\" { default = \"...\" }`) at the top of your output alongside any other variables.\n5. SECURITY GROUP RULES: You MUST inspect the ingress and egress arrays in the security group telemetry. For each rule, generate an inline 'ingress' or 'egress' block inside the 'aws_security_group' resource. Map the 'from_port', 'to_port', 'protocol', and 'cidr_blocks'/'ipv6_cidr_blocks'/'security_groups' values accurately. Do not leave the Security Group empty.\n6. TAG DEFAULT VALUE FIDELITY: When parameterizing the 'Environment' or 'Owner' tags, set their default values to sensible production settings (e.g. environment = \"production\", owner = \"LangGraph-Agent\") rather than empty strings, if they are empty in the AWS telemetry."
@@ -256,10 +306,21 @@ def generate_compute_node(state: GraphState) -> dict:
                 EXAMPLE WRONG: Environment = var.environment  EXAMPLE RIGHT: Environment = "production"
                 ONLY use the exact hardcoded AWS IDs provided in the input JSON data. IF an ID is missing, use a placeholder string.
                 Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
-                Example syntax:
+                CRITICAL IMPORT BLOCK RULES:
+                For every resource generated, you MUST output a corresponding 'import' block.
+                You must extract the correct identifying string from the input JSON based on this strict mapping matrix:
+
+                1. aws_vpc -> Use the 'VpcId' (e.g., vpc-12345)
+                2. aws_subnet -> Use the 'SubnetId' (e.g., subnet-67890)
+                3. aws_security_group -> Use the 'GroupId' (e.g., sg-11111)
+                4. aws_instance -> Use the 'InstanceId' (e.g., i-22222)
+                5. aws_db_instance -> Use the DB 'DBInstanceIdentifier' name, NOT the ARN.
+                6. aws_db_subnet_group -> Use the 'DBSubnetGroupName' string.
+
+                Format the import block exactly like this at the top of the file:
                 import {{
-                    to = aws_instance.app
-                    id = "i-0123456789abcdef0"
+                  to = resource_type.local_name
+                  id = "EXACT_MAPPED_STRING"
                 }}
                 If the aws_input_data contains no compute resources, output exactly: # No compute resources required.
                 """
@@ -283,7 +344,21 @@ def generate_compute_node(state: GraphState) -> dict:
             "2. NO REFERENCES: NEVER use Terraform cross-references. WRONG: subnet_id = aws_subnet.sub-123.id. RIGHT: subnet_id = \"subnet-123\". MUST use string literals with quotes.\n"
             "3. NO VARIABLES: NEVER use var.* syntax. WRONG: username = var.user. RIGHT: username = \"admin\". Hardcode all values.\n"
             "4. DYNAMODB: If you generate an aws_dynamodb_table, you MUST set billing_mode = \"PAY_PER_REQUEST\" and you are strictly FORBIDDEN from specifying read_capacity_units or write_capacity_units.\n"
-            "5. NO DEFAULT TAGS: Do NOT add any default tags (like Environment, Owner, ManagedBy) if they are not explicitly present in the input JSON tags. ONLY copy the exact tags provided in the JSON telemetry. If the telemetry tags are empty, do NOT output a tags block at all."
+            "5. NO DEFAULT TAGS: Do NOT add any default tags (like Environment, Owner, ManagedBy) if they are not explicitly present in the input JSON tags. ONLY copy the exact tags provided in the JSON telemetry. If the telemetry tags are empty, do NOT output a tags block at all.\n"
+            "6. CRITICAL IMPORT BLOCK RULES:\n"
+            "   For every resource generated, you MUST output a corresponding 'import' block.\n"
+            "   You must extract the correct identifying string from the input JSON based on this strict mapping matrix:\n"
+            "   1. aws_vpc -> Use the 'VpcId' (e.g., vpc-12345)\n"
+            "   2. aws_subnet -> Use the 'SubnetId' (e.g., subnet-67890)\n"
+            "   3. aws_security_group -> Use the 'GroupId' (e.g., sg-11111)\n"
+            "   4. aws_instance -> Use the 'InstanceId' (e.g., i-22222)\n"
+            "   5. aws_db_instance -> Use the DB 'DBInstanceIdentifier' name, NOT the ARN.\n"
+            "   6. aws_db_subnet_group -> Use the 'DBSubnetGroupName' string.\n\n"
+            "   Format the import block exactly like this at the top of the file:\n"
+            "   import {\n"
+            "     to = resource_type.local_name\n"
+            "     id = \"EXACT_MAPPED_STRING\"\n"
+            "   }"
         )
     else:  # clone
         prompt_user = "ABSOLUTE MANDATE FOR CLONE MODE:\n1. PARAMETERIZATION: Replace hardcoded IDs and names from the aws_input_data JSON with var.* references.\n2. VARIABLE DECLARATION: You MUST explicitly output a 'variable \"...\" { default = \"...\" }' block with the original scanned value from the telemetry set as the default, for EVERY var.* reference you generate. Write these variable blocks AT THE VERY TOP of your output, inside the exact same HCL block as your resources. DO NOT omit them thinking they belong in a separate variables.tf file. YOU MUST WRITE THEM HERE.\nEXAMPLE REQUIRED OUTPUT:\nvariable \"instance_type\" { default = \"t3.micro\" }\nresource \"aws_instance\" \"app\" { instance_type = var.instance_type }\n\n3. SYNTAX: Do NOT generate 'aws_vpc_gateway_attachment' resources. Associate Internet Gateways directly by setting the 'vpc_id' argument inside the 'aws_internet_gateway' block.\n4. DOMAIN RESTRICTION: You are the COMPUTE node. You MUST ONLY generate compute resources (aws_instance, ASG, Launch Templates). Completely IGNORE any subnets, security groups, or S3 buckets in the JSON. NEVER generate aws_subnet. CRITICAL: When you parameterize your resources, you MUST explicitly declare variables with defaults (e.g. `variable \"ami_id\" { default = \"...\" }`, `variable \"instance_type\" { default = \"...\" }`, and `variable \"subnet_id\" { default = \"...\" }`) at the top of your output alongside your resources.\n5. LAUNCH TEMPLATES & BOOTSTRAPPING: When generating an aws_launch_template, you MUST inspect its telemetry fields. If 'user_data' is present, set the 'user_data' argument. If 'block_device_mappings' are present, generate the matching nested 'block_device_mappings' blocks specifying device name, EBS volume size, and type. If 'iam_instance_profile' is present, specify it inside the launch template.\n6. TAG DEFAULT VALUE FIDELITY: When parameterizing the 'Environment' or 'Owner' tags, set their default values to sensible production settings (e.g. environment = \"production\", owner = \"LangGraph-Agent\") rather than empty strings, if they are empty in the AWS telemetry."
@@ -350,10 +425,21 @@ def generate_data_node(state: GraphState) -> dict:
                 EXAMPLE WRONG: Environment = var.environment  EXAMPLE RIGHT: Environment = "production"
                 ONLY use the exact hardcoded AWS IDs provided in the input JSON data. IF an ID is missing, use a placeholder string.
                 Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
-                Example syntax:
+                CRITICAL IMPORT BLOCK RULES:
+                For every resource generated, you MUST output a corresponding 'import' block.
+                You must extract the correct identifying string from the input JSON based on this strict mapping matrix:
+
+                1. aws_vpc -> Use the 'VpcId' (e.g., vpc-12345)
+                2. aws_subnet -> Use the 'SubnetId' (e.g., subnet-67890)
+                3. aws_security_group -> Use the 'GroupId' (e.g., sg-11111)
+                4. aws_instance -> Use the 'InstanceId' (e.g., i-22222)
+                5. aws_db_instance -> Use the DB 'DBInstanceIdentifier' name, NOT the ARN.
+                6. aws_db_subnet_group -> Use the 'DBSubnetGroupName' string.
+
+                Format the import block exactly like this at the top of the file:
                 import {{
-                    to = aws_db_instance.main
-                    id = "db-ABCDEFGHIJK"
+                  to = resource_type.local_name
+                  id = "EXACT_MAPPED_STRING"
                 }}
                 If the aws_input_data contains no data resources, output exactly: # No data resources required.
                 """
@@ -378,7 +464,21 @@ def generate_data_node(state: GraphState) -> dict:
             "3. NO VARIABLES: NEVER use var.* syntax. WRONG: username = var.user. RIGHT: username = \"admin\". Hardcode all values.\n"
             "4. DYNAMODB: If you generate an aws_dynamodb_table, you MUST set billing_mode = \"PAY_PER_REQUEST\" and you are strictly FORBIDDEN from specifying read_capacity_units or write_capacity_units.\n"
             "5. RDS INSTANCES: When generating an aws_db_instance, if 'storage_encrypted = true' is in the telemetry, you MUST explicitly set 'storage_encrypted = true' in the resource block. Never place subnet_ids directly inside an aws_db_instance resource block. When network subnets are provided for a database, you MUST generate a separate aws_db_subnet_group resource and link it using the db_subnet_group_name attribute. Never use the name \"default\" for an aws_db_subnet_group. Always generate a descriptive name based on the environment or database identifier (e.g., \"main-db-subnet-group\"). When creating an aws_db_subnet_group, you must only populate the subnet_ids array using the exact IDs of aws_subnet resources that already exist in the provided network state. Do not invent new subnet IDs.\n"
-            "6. NO DEFAULT TAGS: Do NOT add any default tags (like Environment, Owner, ManagedBy) if they are not explicitly present in the input JSON tags. ONLY copy the exact tags provided in the JSON telemetry. If the telemetry tags are empty, do NOT output a tags block at all."
+            "6. NO DEFAULT TAGS: Do NOT add any default tags (like Environment, Owner, ManagedBy) if they are not explicitly present in the input JSON tags. ONLY copy the exact tags provided in the JSON telemetry. If the telemetry tags are empty, do NOT output a tags block at all.\n"
+            "7. CRITICAL IMPORT BLOCK RULES:\n"
+            "   For every resource generated, you MUST output a corresponding 'import' block.\n"
+            "   You must extract the correct identifying string from the input JSON based on this strict mapping matrix:\n"
+            "   1. aws_vpc -> Use the 'VpcId' (e.g., vpc-12345)\n"
+            "   2. aws_subnet -> Use the 'SubnetId' (e.g., subnet-67890)\n"
+            "   3. aws_security_group -> Use the 'GroupId' (e.g., sg-11111)\n"
+            "   4. aws_instance -> Use the 'InstanceId' (e.g., i-22222)\n"
+            "   5. aws_db_instance -> Use the DB 'DBInstanceIdentifier' name, NOT the ARN.\n"
+            "   6. aws_db_subnet_group -> Use the 'DBSubnetGroupName' string.\n\n"
+            "   Format the import block exactly like this at the top of the file:\n"
+            "   import {\n"
+            "     to = resource_type.local_name\n"
+            "     id = \"EXACT_MAPPED_STRING\"\n"
+            "   }"
         )
     else:  # clone
         prompt_user = "ABSOLUTE MANDATE FOR CLONE MODE:\n1. PARAMETERIZATION: Replace hardcoded IDs and names from the aws_input_data JSON with var.* references.\n2. VARIABLE DECLARATION: You MUST explicitly output a 'variable \"...\" { default = \"...\" }' block with the original scanned value from the telemetry set as the default, for EVERY var.* reference you generate. Write these variable blocks AT THE VERY TOP of your output, inside the exact same HCL block as your resources. DO NOT omit them thinking they belong in a separate variables.tf file. YOU MUST WRITE THEM HERE.\nEXAMPLE REQUIRED OUTPUT:\nvariable \"s3_bucket_name\" { default = \"my-scanned-bucket\" }\nresource \"aws_s3_bucket\" \"main\" { bucket = var.s3_bucket_name }\n\n3. SYNTAX: Do NOT generate 'aws_vpc_gateway_attachment' resources. Associate Internet Gateways directly by setting the 'vpc_id' argument inside the 'aws_internet_gateway' block.\n4. DOMAIN RESTRICTION: You are the DATA node. You MUST ONLY generate data/storage resources (aws_s3_bucket, RDS). Completely IGNORE any subnets, instances, or security groups in the JSON. NEVER generate aws_subnet or aws_security_group.\n5. S3 & DYNAMODB CONFIG: When generating an aws_s3_bucket, if the telemetry contains 'versioning' settings, you are strictly FORBIDDEN from nesting a versioning block inside aws_s3_bucket. Instead, you MUST generate a separate, dedicated aws_s3_bucket_versioning resource block (e.g., resource \"aws_s3_bucket_versioning\" \"...\" { bucket = aws_s3_bucket.main.id ... }). If the telemetry contains 'server_side_encryption' settings, map them using nested blocks (e.g. `server_side_encryption_configuration`). When generating an aws_dynamodb_table, you MUST inspect the 'attribute_definitions' and 'hash_key'/'range_key' lists in the telemetry and define the 'attribute' block and keys matching them exactly.\n6. TAG DEFAULT VALUE FIDELITY: When parameterizing the 'Environment' or 'Owner' tags, set their default values to sensible production settings (e.g. environment = \"production\", owner = \"LangGraph-Agent\") rather than empty strings, if they are empty in the AWS telemetry.\n7. DATABASE SYNTAX: Never place subnet_ids directly inside an aws_db_instance. When network subnets are provided for a database, always generate a separate aws_db_subnet_group resource and link it to the aws_db_instance using the db_subnet_group_name attribute. Never use the name \"default\" for an aws_db_subnet_group. Always generate a descriptive name based on the environment or database identifier (e.g., \"main-db-subnet-group\"). When creating an aws_db_subnet_group, you must only populate the subnet_ids array using the exact resource addresses/IDs of aws_subnet resources that already exist in the provided network state. Do not invent new subnet IDs."
