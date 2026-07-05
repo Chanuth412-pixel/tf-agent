@@ -347,6 +347,144 @@ def fetch_live_infrastructure(region_name=None):
         "resources": resources
     }
 
+
+def compile_infrastructure_graph(raw_data, mode):
+    """
+    Compiles discovered infrastructure resources into a structured graph with nodes and edges.
+    Supports 'import' mode (from boto3 telemetry JSON) and 'clone' mode (from static HCL string parsing).
+    """
+    import re
+
+    nodes = {}
+    edges = []
+
+    if mode == "import":
+        # Raw data is expected to be a list of resource dicts or a dictionary containing 'resources'
+        resources = []
+        if isinstance(raw_data, list):
+            resources = raw_data
+        elif isinstance(raw_data, dict):
+            # Try to grab the first VPC if present, to represent it as a node
+            vpc_id = raw_data.get("vpc_id")
+            if vpc_id:
+                nodes[f"aws_vpc.{vpc_id}"] = {
+                    "type": "aws_vpc",
+                    "name": vpc_id,
+                    "display_name": vpc_id
+                }
+            resources = raw_data.get("resources", [])
+
+        for resource in resources:
+            res_type = resource.get("type")
+            res_id = resource.get("id")
+            if not res_type or not res_id:
+                continue
+
+            node_id = f"{res_type}.{res_id}"
+            tags = resource.get("tags") or {}
+            display_name = tags.get("Name") or resource.get("name") or resource.get("bucket") or res_id
+            
+            nodes[node_id] = {
+                "type": res_type,
+                "name": display_name,
+                "display_name": display_name
+            }
+
+            # Extract Edges based on explicit structural attachment keys
+            
+            # VPC container relationship
+            vpc_ref = resource.get("vpc_id") or resource.get("VpcId")
+            if vpc_ref:
+                edges.append({
+                    "source": node_id,
+                    "target": f"aws_vpc.{vpc_ref}",
+                    "relation": "contained_in"
+                })
+
+            # Subnet deployed relationship
+            subnet_ref = resource.get("subnet_id") or resource.get("SubnetId")
+            if subnet_ref:
+                edges.append({
+                    "source": node_id,
+                    "target": f"aws_subnet.{subnet_ref}",
+                    "relation": "contained_in" if res_type == "aws_instance" else "associated_with"
+                })
+
+            # Security group relationship (e.g. EC2 instance SecurityGroups)
+            sg_list = resource.get("SecurityGroups") or resource.get("security_groups") or []
+            for sg in sg_list:
+                sg_id = None
+                if isinstance(sg, dict):
+                    sg_id = sg.get("GroupId") or sg.get("group_id")
+                elif isinstance(sg, str):
+                    sg_id = sg
+                if sg_id:
+                    edges.append({
+                        "source": node_id,
+                        "target": f"aws_security_group.{sg_id}",
+                        "relation": "associated_with"
+                    })
+
+            # Launch template relationship
+            lt_ref = resource.get("launch_template_id") or resource.get("LaunchTemplateId")
+            if lt_ref:
+                edges.append({
+                    "source": node_id,
+                    "target": f"aws_launch_template.{lt_ref}",
+                    "relation": "uses_template"
+                })
+
+    elif mode == "clone":
+        # Raw data is expected to be HCL configuration string
+        hcl_content = ""
+        if isinstance(raw_data, str):
+            hcl_content = raw_data
+        elif isinstance(raw_data, dict):
+            # If a dict of files, join them
+            hcl_content = "\n".join(raw_data.values())
+
+        # Extract Nodes using r'resource\s+"([^"]+)"\s+"([^"]+)"'
+        # To identify positions, we can use re.finditer to extract both resource info and block ranges
+        resource_pattern = r'resource\s+"([^"]+)"\s+"([^"]+)"'
+        matches = list(re.finditer(resource_pattern, hcl_content))
+        
+        for match in matches:
+            res_type = match.group(1)
+            res_name = match.group(2)
+            node_id = f"{res_type}.{res_name}"
+            
+            nodes[node_id] = {
+                "type": res_type,
+                "name": res_name,
+                "display_name": res_name
+            }
+
+        # Extract Edges by scanning each block for references to other resources
+        for i, match in enumerate(matches):
+            current_id = f"{match.group(1)}.{match.group(2)}"
+            start_pos = match.start()
+            # The block extends to the start of the next resource or end of content
+            end_pos = matches[i+1].start() if i + 1 < len(matches) else len(hcl_content)
+            block_text = hcl_content[start_pos:end_pos]
+
+            for other_id in nodes:
+                if other_id == current_id:
+                    continue
+                # Search for reference with word boundaries to ensure it's not a substring of a larger identifier
+                ref_pattern = r'\b' + re.escape(other_id) + r'\b'
+                if re.search(ref_pattern, block_text):
+                    edges.append({
+                        "source": current_id,
+                        "target": other_id,
+                        "relation": "depends_on"
+                    })
+
+    return {
+        "nodes": nodes,
+        "edges": edges
+    }
+
+
 # --- UPGRADED LOCAL TESTING HARNESS ---
 @mock_aws
 def test_fetcher_locally():

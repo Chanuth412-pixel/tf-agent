@@ -1,4 +1,9 @@
-from typing import TypedDict, Dict, Any
+from typing import TypedDict, Dict, Any, List
+
+
+class InfrastructureGraph(TypedDict):
+    nodes: Dict[str, Any]  # Key: Resource ID (e.g., 'aws_vpc.main'), Value: Attribute payload
+    edges: List[Dict[str, Any]]  # List of dicts specifying 'source', 'target', and 'relation' type
 
 
 class GraphState(TypedDict):
@@ -18,6 +23,10 @@ class GraphState(TypedDict):
     validation_results: str
     is_valid: bool
 
+    # --- Topology & Compliance ---
+    infrastructure_graph: InfrastructureGraph
+    compliance_report: List[Any]
+
 
 def create_initial_state(raw_json: Dict) -> GraphState:
     return GraphState(
@@ -33,4 +42,7 @@ def create_initial_state(raw_json: Dict) -> GraphState:
         data_hcl="",
         validation_results="",
         is_valid=False,
+        infrastructure_graph={"nodes": {}, "edges": []},
+        compliance_report=[],
     )
+

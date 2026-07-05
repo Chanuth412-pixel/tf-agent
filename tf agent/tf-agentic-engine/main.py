@@ -30,7 +30,9 @@ def main():
         "aws_input_data": aws_data,
         "retry_count": 0,
         "max_retries": 3,
-        "current_phase": "network"
+        "current_phase": "network",
+        "infrastructure_graph": {"nodes": {}, "edges": []},
+        "compliance_report": [],
     }
 
     # --- 4. Execute the Graph ---

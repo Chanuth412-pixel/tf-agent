@@ -95,7 +95,17 @@ CRITICAL CONSTRAINT: Return ONLY valid, raw HCL structural syntax code blocks. D
 - For Terraform 1.5+ `import` blocks: You MUST always specify the `to` and `id` arguments. The argument `id` is REQUIRED and must be named exactly `id` (e.g., `id = "..."`). You are strictly FORBIDDEN from using `name = "..."` or any other argument name in place of `id`.
   CRITICAL: All `import` blocks MUST be top-level blocks outside and separate from any resource blocks. You are strictly FORBIDDEN from nesting `import` blocks inside a resource block body.
 - For all resources (especially `aws_security_group` description and resource `tags` blocks): You MUST inspect the input JSON telemetry. If a resource contains a `description` or a `tags` block, you MUST copy the description value and the tag key-value pairs EXACTLY as they are into the generated HCL resource blocks. You are strictly FORBIDDEN from overriding, removing, or ignoring live tags (e.g. `Name` tags) or descriptions in favor of generic defaults (like Environment, Owner, ManagedBy) unless the telemetry tags are empty.
-- For `aws_s3_bucket`: The argument to set the bucket name is `bucket` (e.g., `bucket = "my-bucket"`). You are strictly FORBIDDEN from using `name = "my-bucket"`.
+- For `aws_s3_bucket`: The argument to set the bucket name is `bucket` (e.g., `bucket = "my-bucket"`). You are strictly FORBIDDEN from using `name = "my-bucket"`. You are strictly FORBIDDEN from nesting a `versioning { ... }` block inside the `aws_s3_bucket` resource block. Instead, bucket versioning must always be declared as a separate, dedicated `aws_s3_bucket_versioning` resource.
+  Example:
+  resource "aws_s3_bucket" "example" {
+    bucket = "my-bucket"
+  }
+  resource "aws_s3_bucket_versioning" "example_versioning" {
+    bucket = aws_s3_bucket.example.id
+    versioning_configuration {
+      status = "Enabled"
+    }
+  }
 - For resource local names (the block identifier after the resource type, e.g. `resource "aws_s3_bucket" "local_name"`): You MUST replace any hyphens (`-`) in the AWS resource name with underscores (`_`) (e.g. use `tf_engine_state_table` instead of `tf-engine-state-table` for the block identifier). However, the actual resource argument fields (like `name = "..."`, `bucket = "..."`, and `id = "..."` inside the `import` block) MUST keep their original hyphens to match AWS exactly.
 - Do NOT add a `description` argument to resources unless it is explicitly supported by that resource type (e.g. `aws_security_group` supports it, but `aws_autoscaling_group` and `aws_subnet` do NOT).
 ========================================================================
@@ -173,6 +183,91 @@ def clean_hcl_output(text: str) -> str:
     content = re.sub(r'^\s*hcl\s*$', '', content, flags=re.IGNORECASE | re.MULTILINE)
 
     return content.strip()
+
+def scrub_workspace_variables(workspace_dir: str = "terraform_workspace") -> None:
+    """
+    Scans every .tf file in the workspace directory (except provider.tf),
+    extracts all variable blocks using robust brace-matching, deletes them from
+    the source files, and writes them uniquely to variables.tf.
+    """
+    import os
+    import re
+    import glob
+    
+    if not os.path.exists(workspace_dir):
+        return
+        
+    variables_map = {}
+    tf_files = glob.glob(os.path.join(workspace_dir, "*.tf"))
+    
+    # 1. Read variables from all tf files
+    for tf_file in tf_files:
+        basename = os.path.basename(tf_file)
+        if basename == "provider.tf":
+            continue
+            
+        try:
+            with open(tf_file, "r", encoding="utf-8") as f:
+                content = f.read()
+        except Exception:
+            continue
+            
+        clean_content = content
+        modified = False
+        
+        matches = list(re.finditer(r'variable\s+"([^"]+)"\s*\{', clean_content))
+        for match in reversed(matches):
+            var_name = match.group(1)
+            start_idx = match.end() - 1
+            brace_count = 0
+            block_content = []
+            has_ended = False
+            for char in clean_content[start_idx:]:
+                block_content.append(char)
+                if char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        has_ended = True
+                        break
+            
+            if has_ended:
+                block_str = "".join(block_content)
+                full_block = f'variable "{var_name}" ' + block_str
+                
+                if var_name not in variables_map:
+                    variables_map[var_name] = full_block
+                    
+                end_idx = start_idx + len(block_str)
+                block_start = match.start()
+                clean_content = clean_content[:block_start] + clean_content[end_idx:]
+                modified = True
+                
+        if modified:
+            try:
+                with open(tf_file, "w", encoding="utf-8") as f:
+                    f.write(clean_content.strip() + "\n")
+            except Exception as e:
+                print(f"Error writing scrubbed file {tf_file}: {e}")
+
+    # 2. Write master variables.tf
+    variables_tf_path = os.path.join(workspace_dir, "variables.tf")
+    if variables_map:
+        try:
+            sorted_vars = sorted(variables_map.items())
+            variables_tf_content = "\n\n".join(val for name, val in sorted_vars)
+            with open(variables_tf_path, "w", encoding="utf-8") as f:
+                f.write(variables_tf_content.strip() + "\n")
+        except Exception as e:
+            print(f"Error writing variables.tf: {e}")
+    else:
+        # If no variables remain, delete variables.tf if it exists
+        if os.path.exists(variables_tf_path):
+            try:
+                os.remove(variables_tf_path)
+            except Exception:
+                pass
 
 
 def consolidate_terraform_variables(hcl_files_dict):
@@ -363,6 +458,7 @@ def parse_and_write_files(data, phase_filename=None):
                     pass
 
     # Deduplicate resources across the newly written files
+    scrub_workspace_variables(workspace_dir)
     post_process_hcl_compliance(workspace_dir)
     deduplicate_resources(workspace_dir)
     return True
@@ -460,9 +556,10 @@ def post_process_hcl_compliance(workspace_dir: str) -> None:
                         modified = True
                         print(f"[Corrector] Converted tags in aws_autoscaling_group.{match.group(1)} to inline tag blocks.")
 
-        # 2. Fix aws_s3_bucket status inside versioning block
+        # 2. Fix aws_s3_bucket versioning: split into aws_s3_bucket_versioning
         s3_bucket_matches = list(re.finditer(r'resource\s+"aws_s3_bucket"\s+"([^"]+)"\s*\{', new_content))
         for match in reversed(s3_bucket_matches):
+            bucket_local_name = match.group(1)
             start_idx = match.end() - 1
             brace_count = 0
             block_content = []
@@ -500,12 +597,23 @@ def post_process_hcl_compliance(workspace_dir: str) -> None:
                                 
                     if v_ended:
                         full_versioning_decl = block_str[versioning_match.start():v_start + len(v_block)]
-                        cleaned_versioning = re.sub(r'\bstatus\s*=\s*["\']?[a-zA-Z0-9_-]+["\']?', '', full_versioning_decl)
+                        versioning_body = "".join(v_block[1:-1])  # Exclude braces
                         
-                        new_block_str = block_str.replace(full_versioning_decl, cleaned_versioning)
-                        new_content = new_content[:full_block_start] + f'resource "aws_s3_bucket" "{match.group(1)}" ' + new_block_str + new_content[full_block_end:]
+                        # Determine status
+                        status = "Enabled"
+                        if "disabled" in versioning_body.lower() or "false" in versioning_body.lower():
+                            status = "Suspended"
+                        
+                        # Remove versioning block from aws_s3_bucket
+                        new_block_str = block_str.replace(full_versioning_decl, "")
+                        
+                        # Build the new aws_s3_bucket_versioning resource block
+                        safe_suffix = bucket_local_name.replace("-", "_")
+                        versioning_resource = f'\n\nresource "aws_s3_bucket_versioning" "{safe_suffix}_versioning" {{\n  bucket = aws_s3_bucket.{bucket_local_name}.id\n  versioning_configuration {{\n    status = "{status}"\n  }}\n}}'
+                        
+                        new_content = new_content[:full_block_start] + f'resource "aws_s3_bucket" "{bucket_local_name}" ' + new_block_str + versioning_resource + new_content[full_block_end:]
                         modified = True
-                        print(f"[Corrector] Removed unsupported status from versioning in aws_s3_bucket.{match.group(1)}.")
+                        print(f"[Corrector] Extracted versioning from aws_s3_bucket.{bucket_local_name} into aws_s3_bucket_versioning.")
 
         if modified:
             try:

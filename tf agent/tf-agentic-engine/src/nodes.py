@@ -5,6 +5,7 @@ from src.utils import (
     call_cloud_llm,
     parse_and_write_files,
     execute_terraform_validation,
+    scrub_workspace_variables,
     NETWORK_PROMPT,
     SECURITY_PROMPT,
     COMPUTE_PROMPT,
@@ -380,9 +381,8 @@ def generate_data_node(state: GraphState) -> dict:
             "6. NO DEFAULT TAGS: Do NOT add any default tags (like Environment, Owner, ManagedBy) if they are not explicitly present in the input JSON tags. ONLY copy the exact tags provided in the JSON telemetry. If the telemetry tags are empty, do NOT output a tags block at all."
         )
     else:  # clone
-        prompt_user = "ABSOLUTE MANDATE FOR CLONE MODE:\n1. PARAMETERIZATION: Replace hardcoded IDs and names from the aws_input_data JSON with var.* references.\n2. VARIABLE DECLARATION: You MUST explicitly output a 'variable \"...\" { default = \"...\" }' block with the original scanned value from the telemetry set as the default, for EVERY var.* reference you generate. Write these variable blocks AT THE VERY TOP of your output, inside the exact same HCL block as your resources. DO NOT omit them thinking they belong in a separate variables.tf file. YOU MUST WRITE THEM HERE.\nEXAMPLE REQUIRED OUTPUT:\nvariable \"s3_bucket_name\" { default = \"my-scanned-bucket\" }\nresource \"aws_s3_bucket\" \"main\" { bucket = var.s3_bucket_name }\n\n3. SYNTAX: Do NOT generate 'aws_vpc_gateway_attachment' resources. Associate Internet Gateways directly by setting the 'vpc_id' argument inside the 'aws_internet_gateway' block.\n4. DOMAIN RESTRICTION: You are the DATA node. You MUST ONLY generate data/storage resources (aws_s3_bucket, RDS). Completely IGNORE any subnets, instances, or security groups in the JSON. NEVER generate aws_subnet or aws_security_group.\n5. S3 & DYNAMODB CONFIG: When generating an aws_s3_bucket, if the telemetry contains 'versioning' or 'server_side_encryption' settings, map them using nested blocks (e.g. `versioning { enabled = ... }` or `server_side_encryption_configuration`). When generating an aws_dynamodb_table, you MUST inspect the 'attribute_definitions' and 'hash_key'/'range_key' lists in the telemetry and define the 'attribute' block and keys matching them exactly.\n6. TAG DEFAULT VALUE FIDELITY: When parameterizing the 'Environment' or 'Owner' tags, set their default values to sensible production settings (e.g. environment = \"production\", owner = \"LangGraph-Agent\") rather than empty strings, if they are empty in the AWS telemetry."
+        prompt_user = "ABSOLUTE MANDATE FOR CLONE MODE:\n1. PARAMETERIZATION: Replace hardcoded IDs and names from the aws_input_data JSON with var.* references.\n2. VARIABLE DECLARATION: You MUST explicitly output a 'variable \"...\" { default = \"...\" }' block with the original scanned value from the telemetry set as the default, for EVERY var.* reference you generate. Write these variable blocks AT THE VERY TOP of your output, inside the exact same HCL block as your resources. DO NOT omit them thinking they belong in a separate variables.tf file. YOU MUST WRITE THEM HERE.\nEXAMPLE REQUIRED OUTPUT:\nvariable \"s3_bucket_name\" { default = \"my-scanned-bucket\" }\nresource \"aws_s3_bucket\" \"main\" { bucket = var.s3_bucket_name }\n\n3. SYNTAX: Do NOT generate 'aws_vpc_gateway_attachment' resources. Associate Internet Gateways directly by setting the 'vpc_id' argument inside the 'aws_internet_gateway' block.\n4. DOMAIN RESTRICTION: You are the DATA node. You MUST ONLY generate data/storage resources (aws_s3_bucket, RDS). Completely IGNORE any subnets, instances, or security groups in the JSON. NEVER generate aws_subnet or aws_security_group.\n5. S3 & DYNAMODB CONFIG: When generating an aws_s3_bucket, if the telemetry contains 'versioning' settings, you are strictly FORBIDDEN from nesting a versioning block inside aws_s3_bucket. Instead, you MUST generate a separate, dedicated aws_s3_bucket_versioning resource block (e.g., resource \"aws_s3_bucket_versioning\" \"...\" { bucket = aws_s3_bucket.main.id ... }). If the telemetry contains 'server_side_encryption' settings, map them using nested blocks (e.g. `server_side_encryption_configuration`). When generating an aws_dynamodb_table, you MUST inspect the 'attribute_definitions' and 'hash_key'/'range_key' lists in the telemetry and define the 'attribute' block and keys matching them exactly.\n6. TAG DEFAULT VALUE FIDELITY: When parameterizing the 'Environment' or 'Owner' tags, set their default values to sensible production settings (e.g. environment = \"production\", owner = \"LangGraph-Agent\") rather than empty strings, if they are empty in the AWS telemetry."
 
-    # If there are validation results from a previous run, prepend them
     val_errors = state.get("validation_results", "").replace("{", "{{").replace("}", "}}")
     if val_errors:
         prompt = val_errors + "\n" + prompt
@@ -415,14 +415,61 @@ SKIP_VALIDATE = ("--skip-validate" in sys.argv) or (
 
 def validation_node_func(state: GraphState) -> dict:
     print("[Node] Running Validation...")
+    
+    # Scrub variables on disk to consolidate duplicates before running validation
+    scrub_workspace_variables("terraform_workspace")
+
+    workspace_dir = "terraform_workspace"
+    os.makedirs(workspace_dir, exist_ok=True)
+    
+    # 1. AUTOMATION STEP: Overwrite provider.tf with a local-safe dummy provider
+    mock_provider_hcl = """provider "aws" {
+  region                      = "us-east-1"
+  access_key                  = "mock_access_key"
+  secret_key                  = "mock_secret_key"
+  skip_credentials_validation = true
+  skip_metadata_api_check     = true
+  skip_requesting_account_id  = true
+}
+"""
+    provider_file_path = os.path.join(workspace_dir, "provider.tf")
+    try:
+        with open(provider_file_path, "w", encoding="utf-8") as f:
+            f.write(mock_provider_hcl)
+    except Exception as e:
+        print(f"[Validator] Error writing mock provider.tf: {str(e)}")
+
+    # Compile the infrastructure graph
+    from src.aws_client import compile_infrastructure_graph
+    
+    mode = state.get("deployment_mode")
+    graph = {"nodes": {}, "edges": []}
+    try:
+        if mode == "import":
+            raw_data = state.get("aws_input_data", {})
+            graph = compile_infrastructure_graph(raw_data, mode)
+        elif mode in ["clone", "new"]:
+            # Read generated HCL files from workspace
+            workspace_dir = "terraform_workspace"
+            hcl_parts = []
+            if os.path.exists(workspace_dir):
+                for filename in os.listdir(workspace_dir):
+                    if filename.endswith(".tf"):
+                        with open(os.path.join(workspace_dir, filename), "r", encoding="utf-8") as f:
+                            hcl_parts.append(f.read())
+            combined_hcl = "\n".join(hcl_parts)
+            # Use 'clone' parser format for HCL strings
+            graph = compile_infrastructure_graph(combined_hcl, "clone")
+    except Exception as e:
+        print(f"[Validator] Error compiling infrastructure graph: {str(e)}")
 
     if SKIP_VALIDATE:
         print("[Validator] SKIP_VALIDATE enabled; forcing success (dry-run).")
-        return {"is_valid": True}
+        return {"is_valid": True, "infrastructure_graph": graph}
 
     validation_result = execute_terraform_validation()
     if validation_result.get("is_valid"):
-        return {"is_valid": True}
+        return {"is_valid": True, "infrastructure_graph": graph}
     else:
         errors = state.get("error_logs", [])
         # Merge any error logs from the validator into the node state
@@ -452,4 +499,9 @@ def validation_node_func(state: GraphState) -> dict:
             "error_logs": errors,
             "validation_results": validation_results,
             "retry_count": retry,
+            "infrastructure_graph": graph,
         }
+
+
+
+
