@@ -74,6 +74,12 @@ buckets. Place any databases in private subnets and reference security groups
 from the security phase. Use `var.db_name`, `var.db_username`, `var.db_password`
 via variables (avoid plaintext credentials in HCL files; allow variables to
 be set externally).
+
+CRITICAL AWS PROVIDER V5 RULES:
+1. NEVER put 'versioning', 'server_side_encryption', or 'acl' inside the 'aws_s3_bucket' block.
+2. If you need versioning, create a SEPARATE resource: 'aws_s3_bucket_versioning'.
+3. If you need encryption, create a SEPARATE resource: 'aws_s3_bucket_server_side_encryption_configuration'.
+If you violate these rules, the system will crash.
 """
 
 COMPLIANCE_RULES = """
@@ -1081,3 +1087,144 @@ def generate_drawio_xml(state: dict, workspace_dir: str = "terraform_workspace")
     with open(drawio_path, "w", encoding="utf-8") as f:
         f.write("\n".join(xml_lines))
     return drawio_path
+
+
+def scrub_deprecated_s3_syntax(workspace_dir: str = "terraform_workspace"):
+    """
+    Forcefully removes deprecated inline S3 arguments (versioning, encryption, acl)
+    hallucinated by the LLM from all .tf files before validation runs.
+    """
+    import os
+    import re
+
+    if not os.path.exists(workspace_dir):
+        return
+
+    for filename in os.listdir(workspace_dir):
+        if not filename.endswith(".tf"):
+            continue
+            
+        filepath = os.path.join(workspace_dir, filename)
+        with open(filepath, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        modified = False
+        new_content = content
+
+        # We look for aws_s3_bucket resources and process their block contents
+        s3_bucket_matches = list(re.finditer(r'resource\s+"aws_s3_bucket"\s+"([^"]+)"\s*\{', new_content))
+        for match in reversed(s3_bucket_matches):
+            bucket_local_name = match.group(1)
+            start_idx = match.end() - 1
+            brace_count = 0
+            block_content = []
+            has_ended = False
+            for char in new_content[start_idx:]:
+                block_content.append(char)
+                if char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        has_ended = True
+                        break
+                        
+            if has_ended:
+                block_str = "".join(block_content)
+                full_block_start = match.start()
+                full_block_end = start_idx + len(block_str)
+
+                # Now within this bucket block, let's search for versioning, server_side_encryption, and acl
+                # and remove them cleanly using brace matching where needed.
+                cleaned_block = block_str
+
+                # Remove acl line
+                cleaned_block = re.sub(r'^\s*acl\s*=\s*.*$', '', cleaned_block, flags=re.MULTILINE)
+
+                # Remove versioning and server_side_encryption (including nested blocks)
+                for key in ["versioning", "server_side_encryption", "server_side_encryption_configuration"]:
+                    while True:
+                        # Find the key as a word
+                        key_match = re.search(r'\b' + re.escape(key) + r'\b', cleaned_block)
+                        if not key_match:
+                            break
+                        
+                        # Find the start of the block or assignment
+                        start_pos = key_match.start()
+                        
+                        # Find if there is an '=' or '{' after the key
+                        after_key = cleaned_block[key_match.end():]
+                        brace_match = re.search(r'([={])', after_key)
+                        if not brace_match:
+                            # Just remove the line
+                            line_end = cleaned_block.find('\n', start_pos)
+                            if line_end == -1:
+                                line_end = len(cleaned_block)
+                            cleaned_block = cleaned_block[:start_pos] + cleaned_block[line_end:]
+                            continue
+                            
+                        marker = brace_match.group(1)
+                        marker_pos = key_match.end() + brace_match.start()
+                        
+                        if marker == '{':
+                            # It's a block. Find the matching closing brace.
+                            b_count = 0
+                            end_pos = -1
+                            for idx, char in enumerate(cleaned_block[marker_pos:]):
+                                if char == '{':
+                                    b_count += 1
+                                elif char == '}':
+                                    b_count -= 1
+                                    if b_count == 0:
+                                        end_pos = marker_pos + idx + 1
+                                        break
+                            if end_pos != -1:
+                                cleaned_block = cleaned_block[:start_pos] + cleaned_block[end_pos:]
+                            else:
+                                # Fallback: remove the line
+                                line_end = cleaned_block.find('\n', start_pos)
+                                if line_end == -1:
+                                    line_end = len(cleaned_block)
+                                cleaned_block = cleaned_block[:start_pos] + cleaned_block[line_end:]
+                        else:
+                            # It's an assignment. E.g. key = ...
+                            # Check if the value is a brace object or simple assignment
+                            # Find next '{' or newline
+                            after_eq = cleaned_block[marker_pos+1:]
+                            next_brace_or_nl = re.search(r'([{\n])', after_eq)
+                            if next_brace_or_nl and next_brace_or_nl.group(1) == '{':
+                                # It's an assignment to a brace block (e.g. versioning = { ... })
+                                brace_start_pos = marker_pos + 1 + next_brace_or_nl.start()
+                                b_count = 0
+                                end_pos = -1
+                                for idx, char in enumerate(cleaned_block[brace_start_pos:]):
+                                    if char == '{':
+                                        b_count += 1
+                                    elif char == '}':
+                                        b_count -= 1
+                                        if b_count == 0:
+                                            end_pos = brace_start_pos + idx + 1
+                                            break
+                                if end_pos != -1:
+                                    cleaned_block = cleaned_block[:start_pos] + cleaned_block[end_pos:]
+                                else:
+                                    # Fallback
+                                    line_end = cleaned_block.find('\n', start_pos)
+                                    if line_end == -1:
+                                        line_end = len(cleaned_block)
+                                    cleaned_block = cleaned_block[:start_pos] + cleaned_block[line_end:]
+                            else:
+                                # Simple line assignment
+                                line_end = cleaned_block.find('\n', start_pos)
+                                if line_end == -1:
+                                    line_end = len(cleaned_block)
+                                cleaned_block = cleaned_block[:start_pos] + cleaned_block[line_end:]
+
+                if cleaned_block != block_str:
+                    new_content = new_content[:full_block_start] + f'resource "aws_s3_bucket" "{bucket_local_name}" ' + cleaned_block + new_content[full_block_end:]
+                    modified = True
+
+        if modified:
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(new_content)
+

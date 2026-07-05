@@ -439,6 +439,11 @@ def validation_node_func(state: GraphState) -> dict:
     except Exception as e:
         print(f"[Validator] Error writing mock provider.tf: {str(e)}")
 
+    # 1. SCRUBBER STEP: Forcefully remove LLM S3 hallucinations before validation
+    print("[Node] Scrubbing deprecated S3 syntax from generated files...")
+    from src.utils import scrub_deprecated_s3_syntax
+    scrub_deprecated_s3_syntax(workspace_dir)
+
     # Compile the infrastructure graph
     from src.aws_client import compile_infrastructure_graph
     
