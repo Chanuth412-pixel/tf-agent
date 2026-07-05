@@ -318,18 +318,44 @@ def fetch_live_infrastructure(region_name=None):
             logger.warning(f"Failed to fetch DynamoDB tables: {str(db_err)}")
         
         try:
+            # Discover and fetch DB Subnet Groups
+            db_subnet_groups_resp = rds.describe_db_subnet_groups()
+            for sng in db_subnet_groups_resp.get('DBSubnetGroups', []):
+                # Filter to only fetch subnet groups residing in the primary VPC
+                if vpc_id and sng.get('VpcId') != vpc_id:
+                    continue
+                sng_subnets = [sub['SubnetIdentifier'] for sub in sng.get('Subnets', [])]
+                resources.append({
+                    "type": "aws_db_subnet_group",
+                    "id": sng['DBSubnetGroupName'],
+                    "name": sng['DBSubnetGroupName'],
+                    "subnet_ids": sng_subnets,
+                    "description": sng.get('DBSubnetGroupDescription', ''),
+                    "tags": get_tags_dict(sng.get('TagList', []))
+                })
+        except Exception as sng_err:
+            logger.warning(f"Failed to fetch DB Subnet Groups: {str(sng_err)}")
+
+        try:
             db_instances_resp = rds.describe_db_instances()
             for db in db_instances_resp.get('DBInstances', []):
                 # Filter to only fetch DB instances residing in the primary VPC
-                db_vpc_id = db.get('DBSubnetGroup', {}).get('VpcId')
+                db_subnet_group = db.get('DBSubnetGroup', {})
+                db_vpc_id = db_subnet_group.get('VpcId')
                 if vpc_id and db_vpc_id != vpc_id:
                     continue
+                
+                db_subnet_group_name = db_subnet_group.get('DBSubnetGroupName')
+                subnet_ids = [sub['SubnetIdentifier'] for sub in db_subnet_group.get('Subnets', [])]
+                
                 resources.append({
                     "type": "aws_db_instance",
                     "id": db['DBInstanceIdentifier'],
                     "engine": db['Engine'],
                     "instance_class": db['DBInstanceClass'],
                     "storage_encrypted": db.get('StorageEncrypted', False),
+                    "db_subnet_group_name": db_subnet_group_name,
+                    "subnet_ids": subnet_ids,
                     "tags": get_tags_dict(db.get('TagList', []))
                 })
         except Exception as rds_err:
@@ -433,6 +459,63 @@ def compile_infrastructure_graph(raw_data, mode):
                     "target": f"aws_launch_template.{lt_ref}",
                     "relation": "uses_template"
                 })
+
+            # DB Subnet Group and RDS relationships
+            if res_type == "aws_db_subnet_group":
+                subnet_ids = resource.get("subnet_ids") or []
+                for sub_id in subnet_ids:
+                    edges.append({
+                        "source": node_id,
+                        "target": f"aws_subnet.{sub_id}",
+                        "relation": "groups_subnet"
+                    })
+
+            if res_type == "aws_db_instance":
+                db_sng = resource.get("db_subnet_group_name") or "default"
+                sng_node_id = f"aws_db_subnet_group.{db_sng}"
+                
+                # Dynamic injection of DB subnet group node if not already present
+                if sng_node_id not in nodes:
+                    nodes[sng_node_id] = {
+                        "type": "aws_db_subnet_group",
+                        "name": db_sng,
+                        "display_name": db_sng
+                    }
+                
+                edges.append({
+                    "source": node_id,
+                    "target": sng_node_id,
+                    "relation": "uses_subnet_group"
+                })
+
+                # If we dynamically created the sng node or it has subnet IDs, let's link it to subnets
+                snet_ids = resource.get("subnet_ids") or []
+                if not snet_ids:
+                    # Look up subnets in the list of resources
+                    for r in resources:
+                        if r.get("type") == "aws_subnet":
+                            r_tags = r.get("tags") or {}
+                            r_name = r_tags.get("Name", "").lower()
+                            r_id = r.get("id", "").lower()
+                            # Prefer private subnets
+                            if "private" in r_name or "private" in r_id:
+                                snet_ids.append(r.get("id"))
+                    # Fallback to all subnets if no private found
+                    if not snet_ids:
+                        for r in resources:
+                            if r.get("type") == "aws_subnet":
+                                snet_ids.append(r.get("id"))
+                
+                # Check existing edges to avoid duplicate groups_subnet edges
+                existing_sng_targets = {e["target"] for e in edges if e["source"] == sng_node_id and e["relation"] == "groups_subnet"}
+                for sub_id in snet_ids:
+                    target_sub = f"aws_subnet.{sub_id}"
+                    if target_sub not in existing_sng_targets:
+                        edges.append({
+                            "source": sng_node_id,
+                            "target": target_sub,
+                            "relation": "groups_subnet"
+                        })
 
     elif mode == "clone":
         # Raw data is expected to be HCL configuration string
@@ -579,14 +662,20 @@ def test_fetcher_locally():
 
     print("[Local Test] Fetching data using your upgraded function...")
     data = fetch_live_infrastructure(region_name='us-east-1')
-    # Add RDS instance to resources for expanded stress test
-    data['resources'].append({
-        "id": "db-master",
-        "instance_class": "db.t3.micro",
-        "engine": "postgres",
-        "allocated_storage": 20,
-        "type": "aws_db_instance"
-    })
+    # Add RDS instance to resources for expanded stress test if not already fetched
+    if not any(r.get("id") == "db-master" for r in data['resources']):
+        data['resources'].append({
+            "id": "db-master",
+            "instance_class": "db.t3.micro",
+            "engine": "postgres",
+            "allocated_storage": 20,
+            "type": "aws_db_instance",
+            "db_subnet_group_name": "default",
+            "subnet_ids": [
+                subnet_private_1a['Subnet']['SubnetId'],
+                subnet_private_1b['Subnet']['SubnetId']
+            ]
+        })
     print(json.dumps(data, indent=4))
     return data
 
