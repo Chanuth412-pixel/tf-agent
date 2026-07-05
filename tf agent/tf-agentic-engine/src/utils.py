@@ -1091,8 +1091,8 @@ def generate_drawio_xml(state: dict, workspace_dir: str = "terraform_workspace")
 
 def scrub_deprecated_s3_syntax(workspace_dir: str = "terraform_workspace"):
     """
-    Forcefully removes deprecated inline S3 arguments by reading the file line-by-line.
-    This guarantees that hallucinated blocks are deleted before the compiler sees them.
+    A context-aware parser that forcefully removes deprecated S3 arguments
+    ONLY when they occur inside an 'aws_s3_bucket' resource block.
     """
     import os
     import re
@@ -1109,35 +1109,43 @@ def scrub_deprecated_s3_syntax(workspace_dir: str = "terraform_workspace"):
             lines = f.readlines()
             
         new_lines = []
-        skip_mode = False
-        brace_count = 0
+        inside_s3_bucket = False
+        bucket_brace_depth = 0
+        skip_brackets = 0
         
         for line in lines:
-            # 1. If we are currently inside a multi-line forbidden block, keep skipping
-            if skip_mode:
-                brace_count += line.count('{')
-                brace_count -= line.count('}')
-                if brace_count <= 0:
-                    skip_mode = False  # The block has ended, stop skipping
+            # Detect if we are entering an aws_s3_bucket block
+            if re.match(r'^\s*resource\s+"aws_s3_bucket"\s+', line):
+                inside_s3_bucket = True
+                bucket_brace_depth = line.count('{') - line.count('}')
+                new_lines.append(line)
                 continue
+
+            if inside_s3_bucket:
+                # If we are currently ignoring a multi-line forbidden block, track the brackets
+                if skip_brackets > 0:
+                    skip_brackets += line.count('{')
+                    skip_brackets -= line.count('}')
+                    continue # Skip writing this line
+                    
+                # Detect forbidden S3 arguments (matches 'versioning =', 'versioning {', 'acl =', etc.)
+                if re.match(r'^\s*(versioning|server_side_encryption|server_side_encryption_configuration|acl)\s*(=|\{)', line) or re.match(r'^\s*acl\s*=', line):
+                    # Count brackets on this specific line to handle inline/multi-line blocks
+                    skip_brackets += line.count('{')
+                    skip_brackets -= line.count('}')
+                    continue # Skip writing this line
                 
-            # 2. Catch the start of a forbidden block (e.g., `versioning = {` or `server_side_encryption = {`)
-            # This regex catches any amount of spaces and aligned equals signs
-            if re.match(r'^\s*(versioning|server_side_encryption|server_side_encryption_configuration)\s*=?\s*\{', line):
-                brace_count = line.count('{') - line.count('}')
-                if brace_count > 0:
-                    # The block stays open on the next line (multi-line block)
-                    skip_mode = True 
-                continue # Skip writing this line to the new file
+                # If we are not skipping, update the bucket brace depth
+                bucket_brace_depth += line.count('{')
+                bucket_brace_depth -= line.count('}')
                 
-            # 3. Catch inline ACLs (e.g., `acl = "private"`)
-            if re.match(r'^\s*acl\s*=\s*".*"', line):
-                continue
-                
-            # If it's a safe line, keep it
+                if bucket_brace_depth <= 0:
+                    inside_s3_bucket = False
+
+            # If it passes the firewall, keep the line
             new_lines.append(line)
             
-        # Overwrite the file with the clean code
+        # Overwrite the file with the sanitized code
         with open(filepath, "w", encoding="utf-8") as f:
             f.writelines(new_lines)
 
