@@ -943,3 +943,141 @@ def generate_terraform_graph(workspace_path: str) -> None:
         
     except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
         print(f"Graph generation failed: {e}")
+
+
+def generate_png_graph(state: dict, workspace_dir: str = "terraform_workspace") -> str:
+    """
+    Generates a DOT representation of the infrastructure_graph and converts it
+    to a PNG image file using Graphviz's dot utility.
+    """
+    infra_graph = state.get("infrastructure_graph", {"nodes": {}, "edges": []})
+    nodes = infra_graph.get("nodes", {})
+    edges = infra_graph.get("edges", [])
+
+    dot_lines = ["digraph G {", '  node [style="filled", shape="box", fontname="Arial"];']
+
+    # Add nodes with colors
+    for node_key, node_data in nodes.items():
+        name = node_data.get("name") or node_key
+        # Pick background color based on type
+        color = "lightblue"
+        if "vpc" in node_key:
+            color = "lightgreen"
+        elif "subnet" in node_key:
+            color = "bisque"
+        elif "security" in node_key:
+            color = "lightpink"
+            
+        dot_lines.append(f'  "{node_key}" [label="{name}", fillcolor="{color}"];')
+
+    # Add edges
+    for edge in edges:
+        source = edge.get("source")
+        target = edge.get("target")
+        relation = edge.get("relation", "")
+        dot_lines.append(f'  "{source}" -> "{target}" [label="{relation}"];')
+
+    dot_lines.append("}")
+
+    dot_content = "\n".join(dot_lines)
+    dot_file_path = os.path.join(workspace_dir, "architecture.dot")
+    png_file_path = os.path.join(workspace_dir, "architecture.png")
+
+    with open(dot_file_path, "w", encoding="utf-8") as f:
+        f.write(dot_content)
+
+    # Convert dot to png using the dot CLI tool
+    try:
+        subprocess.run(
+            ["dot", "-Tpng", "architecture.dot", "-o", "architecture.png"],
+            cwd=workspace_dir,
+            capture_output=True,
+            check=True
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        raise RuntimeError(f"Graphviz 'dot' command execution failed or not found: {str(e)}")
+
+    return png_file_path
+
+
+def generate_drawio_xml(state: dict, workspace_dir: str = "terraform_workspace") -> str:
+    """
+    Generates a standard Draw.io/mxGraph XML representation of the infrastructure_graph,
+    applying a clean layout with custom color tiers for resource categories.
+    """
+    import math
+
+    infra_graph = state.get("infrastructure_graph", {"nodes": {}, "edges": []})
+    nodes = infra_graph.get("nodes", {})
+    edges = infra_graph.get("edges", [])
+
+    xml_lines = [
+        '<mxfile host="Electron" version="21.6.8" type="device">',
+        '  <diagram id="diagram_1" name="Architecture Map">',
+        '    <mxGraphModel dx="1000" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">',
+        '      <root>',
+        '        <mxCell id="0" />',
+        '        <mxCell id="1" parent="0" />'
+    ]
+
+    # Arrange nodes in a grid layout
+    cols = math.ceil(math.sqrt(len(nodes))) if nodes else 1
+    x_spacing = 220
+    y_spacing = 160
+    x_start = 60
+    y_start = 60
+
+    # Map node key (e.g. "aws_vpc.main") to a unique mxGraph ID
+    node_ids = {}
+    for idx, (node_key, node_data) in enumerate(nodes.items()):
+        node_ids[node_key] = f"node_{idx + 2}"
+        
+        # Calculate grid position
+        row = idx // cols
+        col = idx % cols
+        x = x_start + col * x_spacing
+        y = y_start + row * y_spacing
+        
+        name = node_data.get("name") or node_key
+        # Custom color styling according to standard IaC tiers
+        style = "rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;"
+        if "vpc" in node_key:
+            style = "rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;"
+        elif "subnet" in node_key:
+            style = "rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;"
+        elif "security" in node_key:
+            style = "rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;"
+            
+        xml_lines.append(
+            f'        <mxCell id="{node_ids[node_key]}" value="{name}" style="{style}" vertex="1" parent="1">'
+            f'          <mxGeometry x="{x}" y="{y}" width="140" height="60" as="geometry" />'
+            f'        </mxCell>'
+        )
+
+    for idx, edge in enumerate(edges):
+        source = edge.get("source")
+        target = edge.get("target")
+        relation = edge.get("relation", "")
+        
+        source_cell = node_ids.get(source)
+        target_cell = node_ids.get(target)
+        
+        if source_cell and target_cell:
+            edge_id = f"edge_{idx}"
+            xml_lines.append(
+                f'        <mxCell id="{edge_id}" value="{relation}" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#B3B3B3;" edge="1" parent="1" source="{source_cell}" target="{target_cell}">'
+                f'          <mxGeometry relative="1" as="geometry" />'
+                f'        </mxCell>'
+            )
+
+    xml_lines.extend([
+        '      </root>',
+        '    </mxGraphModel>',
+        '  </diagram>',
+        '</mxfile>'
+    ])
+
+    drawio_path = os.path.join(workspace_dir, "architecture.drawio")
+    with open(drawio_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(xml_lines))
+    return drawio_path

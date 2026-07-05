@@ -463,12 +463,27 @@ def validation_node_func(state: GraphState) -> dict:
     except Exception as e:
         print(f"[Validator] Error compiling infrastructure graph: {str(e)}")
 
+    validation_success = False
+    validation_result = {}
     if SKIP_VALIDATE:
         print("[Validator] SKIP_VALIDATE enabled; forcing success (dry-run).")
-        return {"is_valid": True, "infrastructure_graph": graph}
+        validation_success = True
+    else:
+        validation_result = execute_terraform_validation()
+        if validation_result.get("is_valid"):
+            validation_success = True
 
-    validation_result = execute_terraform_validation()
-    if validation_result.get("is_valid"):
+    if validation_success:
+        print("[Node] Validation Passed. Compiling and rendering topology graphs...")
+        state["infrastructure_graph"] = graph
+        try:
+            from src.utils import generate_png_graph, generate_drawio_xml
+            png_path = generate_png_graph(state, workspace_dir=workspace_dir)
+            drawio_path = generate_drawio_xml(state, workspace_dir=workspace_dir)
+            print(f"[Success] Generated visual assets:\n - {png_path}\n - {drawio_path}")
+        except Exception as e:
+            print(f"[Warning] Graph rendering failed: {str(e)}")
+        
         return {"is_valid": True, "infrastructure_graph": graph}
     else:
         errors = state.get("error_logs", [])
