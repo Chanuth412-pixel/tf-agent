@@ -79,6 +79,7 @@ CRITICAL AWS PROVIDER V5 RULES:
 1. NEVER put 'versioning', 'server_side_encryption', or 'acl' inside the 'aws_s3_bucket' block.
 2. If you need versioning, create a SEPARATE resource: 'aws_s3_bucket_versioning'.
 3. If you need encryption, create a SEPARATE resource: 'aws_s3_bucket_server_side_encryption_configuration'.
+4. NEVER place 'subnet_ids' directly inside an 'aws_db_instance' resource block. When network subnets are provided for a database, always generate a separate 'aws_db_subnet_group' resource and link it to the database instance using the 'db_subnet_group_name' attribute.
 If you violate these rules, the system will crash.
 """
 
@@ -114,6 +115,7 @@ CRITICAL CONSTRAINT: Return ONLY valid, raw HCL structural syntax code blocks. D
   }
 - For resource local names (the block identifier after the resource type, e.g. `resource "aws_s3_bucket" "local_name"`): You MUST replace any hyphens (`-`) in the AWS resource name with underscores (`_`) (e.g. use `tf_engine_state_table` instead of `tf-engine-state-table` for the block identifier). However, the actual resource argument fields (like `name = "..."`, `bucket = "..."`, and `id = "..."` inside the `import` block) MUST keep their original hyphens to match AWS exactly.
 - Do NOT add a `description` argument to resources unless it is explicitly supported by that resource type (e.g. `aws_security_group` supports it, but `aws_autoscaling_group` and `aws_subnet` do NOT).
+- For `aws_db_instance`: NEVER place the `subnet_ids` argument directly inside the resource block. You are strictly FORBIDDEN from putting a list of subnet IDs inside `aws_db_instance`. Instead, you MUST create a separate `aws_db_subnet_group` resource specifying those subnets in its `subnet_ids` field, and link the `aws_db_instance` to the subnet group by setting `db_subnet_group_name = aws_db_subnet_group.<name>.name`.
 ========================================================================
 """
 
@@ -628,6 +630,52 @@ def post_process_hcl_compliance(workspace_dir: str) -> None:
                         new_content = new_content[:full_block_start] + f'resource "aws_s3_bucket" "{bucket_local_name}" ' + new_block_str + versioning_resource + new_content[full_block_end:]
                         modified = True
                         print(f"[Corrector] Extracted versioning from aws_s3_bucket.{bucket_local_name} into aws_s3_bucket_versioning.")
+
+        # 3. Fix aws_db_instance subnet_ids
+        db_matches = list(re.finditer(r'resource\s+"aws_db_instance"\s+"([^"]+)"\s*\{', new_content))
+        for match in reversed(db_matches):
+            db_local_name = match.group(1)
+            start_idx = match.end() - 1
+            brace_count = 0
+            block_content = []
+            has_ended = False
+            for char in new_content[start_idx:]:
+                block_content.append(char)
+                if char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        has_ended = True
+                        break
+                        
+            if has_ended:
+                block_str = "".join(block_content)
+                full_block_start = match.start()
+                full_block_end = start_idx + len(block_str)
+                
+                subnet_ids_match = re.search(r'\bsubnet_ids\s*=\s*\[([\s\S]*?)\]', block_str)
+                if subnet_ids_match:
+                    subnet_ids_str = subnet_ids_match.group(0)
+                    subnet_ids_list_str = subnet_ids_match.group(1).strip()
+                    
+                    # Remove subnet_ids line from aws_db_instance
+                    new_block_str = block_str.replace(subnet_ids_str, "")
+                    
+                    # Ensure we set db_subnet_group_name
+                    db_sng_ref = f"aws_db_subnet_group.{db_local_name}_subnet_group.name"
+                    if "db_subnet_group_name" not in new_block_str:
+                        # Append db_subnet_group_name inside aws_db_instance before the last closing brace
+                        if new_block_str.rstrip().endswith("}"):
+                            pos = new_block_str.rfind("}")
+                            new_block_str = new_block_str[:pos] + f'\n  db_subnet_group_name = {db_sng_ref}\n' + new_block_str[pos:]
+                    
+                    # Generate separate aws_db_subnet_group block
+                    subnet_group_resource = f'\n\nresource "aws_db_subnet_group" "{db_local_name}_subnet_group" {{\n  name        = "{db_local_name.replace("_", "-")}-subnet-group"\n  subnet_ids  = [{subnet_ids_list_str}]\n  description = "Database subnet group for {db_local_name}"\n}}'
+                    
+                    new_content = new_content[:full_block_start] + f'resource "aws_db_instance" "{db_local_name}" ' + new_block_str + subnet_group_resource + new_content[full_block_end:]
+                    modified = True
+                    print(f"[Corrector] Split subnet_ids from aws_db_instance.{db_local_name} into separate aws_db_subnet_group resource.")
 
         if modified:
             try:
