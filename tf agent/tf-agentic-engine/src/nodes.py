@@ -116,6 +116,30 @@ def generate_network_node(state: GraphState) -> dict:
     You must process EVERY resource provided in the routed payload. 
     If the payload contains multiple independent VPCs or environments (e.g., prod and staging), you must generate separate infrastructure trees for EACH environment. 
     Do NOT drop environments. Do NOT synthesize unrequested auxiliary resources like extra subnets or internet gateways unless they are explicitly present in the input JSON data.
+
+    CRITICAL FEW-SHOT EXAMPLE:
+    You must map the exact 'id' from the JSON to the Terraform resource name. You must write a separate block for every single item in the list. Do not add anything else.
+
+    If the JSON is:
+    [
+      {"type": "aws_vpc", "id": "vpc-core-prod", "cidr_block": "10.10.0.0/16"},
+      {"type": "aws_vpc", "id": "vpc-core-staging", "cidr_block": "10.20.0.0/16"}
+    ]
+
+    Your output MUST BE exactly:
+    resource "aws_vpc" "vpc_core_prod" {
+      cidr_block = "10.10.0.0/16"
+      tags = {
+        Name = "vpc-core-prod"
+      }
+    }
+
+    resource "aws_vpc" "vpc_core_staging" {
+      cidr_block = "10.20.0.0/16"
+      tags = {
+        Name = "vpc-core-staging"
+      }
+    }
     """
     prompt = mode_instructions + "\n" + network_constraint + "\n" + NETWORK_PROMPT
 
@@ -357,6 +381,34 @@ def generate_compute_node(state: GraphState) -> dict:
     You must process EVERY resource provided in the routed payload. 
     If the payload contains multiple independent VPCs or environments (e.g., prod and staging), you must generate separate infrastructure trees for EACH environment. 
     Do NOT drop environments. Do NOT synthesize unrequested auxiliary resources like extra subnets or internet gateways unless they are explicitly present in the input JSON data.
+
+    CRITICAL FEW-SHOT EXAMPLE:
+    You must map the exact 'id' from the JSON to the Terraform resource name. You must write a separate block for every single item in the list. Do not add anything else.
+
+    If the JSON is:
+    [
+      {"type": "aws_instance", "id": "server-web-prod", "subnet_id": "subnet-prod-a"},
+      {"type": "aws_instance", "id": "server-web-staging", "subnet_id": "subnet-staging-a"}
+    ]
+
+    Your output MUST BE exactly:
+    resource "aws_instance" "server_web_prod" {
+      ami           = "ami-0c55b159cbfafe1f0"
+      instance_type = "t3.micro"
+      subnet_id     = "subnet-prod-a"
+      tags = {
+        Name = "server-web-prod"
+      }
+    }
+
+    resource "aws_instance" "server_web_staging" {
+      ami           = "ami-0c55b159cbfafe1f0"
+      instance_type = "t3.micro"
+      subnet_id     = "subnet-staging-a"
+      tags = {
+        Name = "server-web-staging"
+      }
+    }
     """
     prompt = mode_instructions + "\n" + compute_data_constraints + "\n" + COMPUTE_PROMPT
 

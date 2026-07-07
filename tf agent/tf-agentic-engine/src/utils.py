@@ -501,6 +501,76 @@ def post_process_hcl_compliance(workspace_dir: str) -> None:
         modified = False
         new_content = content
         
+        # Nuclear Option: Aggressively remove unrequested/hallucinated internet gateways and route tables
+        mock_infra_path = "scanner/mock_infra.json"
+        has_igw = False
+        has_rt = False
+        if os.path.exists(mock_infra_path):
+            try:
+                import json
+                with open(mock_infra_path, "r", encoding="utf-8") as f:
+                    m_data = json.load(f)
+                resources_list = m_data.get("resources", [])
+                has_igw = any(r.get("type") == "aws_internet_gateway" for r in resources_list)
+                has_rt = any(r.get("type") in ["aws_route_table", "aws_route_table_association"] for r in resources_list)
+            except Exception:
+                has_igw = True
+                has_rt = True
+        else:
+            has_igw = True
+            has_rt = True
+
+        if not has_igw:
+            igw_matches = list(re.finditer(r'resource\s+"aws_internet_gateway"\s+"([^"]+)"\s*\{', new_content))
+            for match in reversed(igw_matches):
+                start_idx = match.end() - 1
+                brace_count = 0
+                block_len = 0
+                has_ended = False
+                for char in new_content[start_idx:]:
+                    block_len += 1
+                    if char == '{':
+                        brace_count += 1
+                    elif char == '}':
+                        brace_count -= 1
+                        if brace_count == 0:
+                            has_ended = True
+                            break
+                if has_ended:
+                    full_block_end = start_idx + block_len
+                    import_pattern = r'import\s*\{\s*to\s*=\s*aws_internet_gateway\.' + re.escape(match.group(1)) + r'\s*id\s*=\s*"[^"]+"\s*\}'
+                    new_content = re.sub(import_pattern, '', new_content)
+                    new_content = new_content[:match.start()] + new_content[full_block_end:]
+                    modified = True
+                    print(f"[Corrector] Removed hallucinated aws_internet_gateway block: {match.group(1)}")
+
+        if not has_rt:
+            rt_pattern = r'resource\s+"(aws_route_table|aws_route_table_association)"\s+"([^"]+)"\s*\{'
+            rt_matches = list(re.finditer(rt_pattern, new_content))
+            for match in reversed(rt_matches):
+                res_type = match.group(1)
+                res_name = match.group(2)
+                start_idx = match.end() - 1
+                brace_count = 0
+                block_len = 0
+                has_ended = False
+                for char in new_content[start_idx:]:
+                    block_len += 1
+                    if char == '{':
+                        brace_count += 1
+                    elif char == '}':
+                        brace_count -= 1
+                        if brace_count == 0:
+                            has_ended = True
+                            break
+                if has_ended:
+                    full_block_end = start_idx + block_len
+                    import_pattern = r'import\s*\{\s*to\s*=\s*' + re.escape(res_type) + r'\.' + re.escape(res_name) + r'\s*id\s*=\s*"[^"]+"\s*\}'
+                    new_content = re.sub(import_pattern, '', new_content)
+                    new_content = new_content[:match.start()] + new_content[full_block_end:]
+                    modified = True
+                    print(f"[Corrector] Removed hallucinated {res_type} block: {res_name}")
+
         # Pre-cleanup: Fix "to = resource.aws_..." and replace hyphens in resource names/labels
         original_content = new_content
         # 1. Fix "to = resource.aws_..." in import blocks
