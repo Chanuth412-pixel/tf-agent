@@ -140,6 +140,14 @@ def generate_network_node(state: GraphState) -> dict:
         Name = "vpc-core-staging"
       }
     }
+
+    CRITICAL INSTRUCTION: You are currently failing to map the staging resources. 
+    You MUST output a terraform resource block for:
+    - vpc-core-prod AND vpc-core-staging
+    - subnet-web-prod AND subnet-web-staging
+    - server-web-prod AND server-web-staging
+
+    If you output 'prod' without also outputting 'staging', your execution will be terminated. Do not summarize. Output the exact blocks.
     """
     prompt = mode_instructions + "\n" + network_constraint + "\n" + NETWORK_PROMPT
 
@@ -409,6 +417,14 @@ def generate_compute_node(state: GraphState) -> dict:
         Name = "server-web-staging"
       }
     }
+
+    CRITICAL INSTRUCTION: You are currently failing to map the staging resources. 
+    You MUST output a terraform resource block for:
+    - vpc-core-prod AND vpc-core-staging
+    - subnet-web-prod AND subnet-web-staging
+    - server-web-prod AND server-web-staging
+
+    If you output 'prod' without also outputting 'staging', your execution will be terminated. Do not summarize. Output the exact blocks.
     """
     prompt = mode_instructions + "\n" + compute_data_constraints + "\n" + COMPUTE_PROMPT
 

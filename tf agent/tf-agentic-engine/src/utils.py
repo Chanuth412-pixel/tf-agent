@@ -502,7 +502,8 @@ def post_process_hcl_compliance(workspace_dir: str) -> None:
         new_content = content
         
         # Nuclear Option: Aggressively remove unrequested/hallucinated internet gateways and route tables
-        mock_infra_path = "scanner/mock_infra.json"
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        mock_infra_path = os.path.abspath(os.path.join(current_dir, "..", "scanner", "mock_infra.json"))
         has_igw = False
         has_rt = False
         if os.path.exists(mock_infra_path):
