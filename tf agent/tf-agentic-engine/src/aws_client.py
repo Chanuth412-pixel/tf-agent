@@ -645,77 +645,43 @@ def test_fetcher_locally():
     iam = boto3.client('iam', region_name=region)
     lambda_client = boto3.client('lambda', region_name=region)
     
-    # Create the VPC based on JSON configuration
-    vpc_cidr = "10.0.0.0/16"
-    vpc = ec2.create_vpc(CidrBlock=vpc_cidr)
-    real_vpc_id = vpc['Vpc']['VpcId']
+    # 1. Pass One: Create independent resources and VPCs
+    vpc_map = {}
+    subnet_map = {}
+    sg_map = {}
+    iam_role_map = {}
     
-    # Tag the VPC so it's recognizable
-    ec2.create_tags(Resources=[real_vpc_id], Tags=[
-        {'Key': 'Name', 'Value': 'mock-vpc'},
-        {'Key': 'OriginalId', 'Value': mock_data.get("vpc_id", "")}
-    ])
-    
-    # Track created subnets
-    subnets = {}
-    
-    # First pass: Create subnets if defined in resources
-    for res in mock_data.get("resources", []):
-        res_type = res.get("type")
-        if res_type == "aws_subnet":
-            attrs = res.get("attributes", {})
-            cidr = attrs.get("cidr_block", "10.0.1.0/24")
-            az = attrs.get("availability_zone", f"{region}a")
-            sub = ec2.create_subnet(VpcId=real_vpc_id, CidrBlock=cidr, AvailabilityZone=az)
-            sub_id = sub['Subnet']['SubnetId']
-            
-            name = res.get("name") or res.get("id")
-            ec2.create_tags(Resources=[sub_id], Tags=[{'Key': 'Name', 'Value': name}])
-            subnets[res.get("id")] = sub_id
-            subnets[name] = sub_id
-            
-    # Fallback default subnets if none defined in JSON
-    if not subnets:
-        subnet_a = ec2.create_subnet(VpcId=real_vpc_id, CidrBlock='10.0.1.0/24', AvailabilityZone=f'{region}a')
-        subnet_b = ec2.create_subnet(VpcId=real_vpc_id, CidrBlock='10.0.2.0/24', AvailabilityZone=f'{region}b')
-        subnets['default_a'] = subnet_a['Subnet']['SubnetId']
-        subnets['default_b'] = subnet_b['Subnet']['SubnetId']
-
-    # Second pass: Create instances, S3 buckets, and RDS databases
-    for res in mock_data.get("resources", []):
-        res_type = res.get("type")
-        res_id = res.get("id")
-        res_name = res.get("name")
-        attrs = res.get("attributes", {})
+    # We always ensure a fallback VPC is created if no VPC is defined in mock_infra.json
+    vpc_defined = any(r.get("type") == "aws_vpc" for r in mock_data.get("resources", []))
+    if not vpc_defined:
+        fallback_vpc = ec2.create_vpc(CidrBlock="10.0.0.0/16")
+        fallback_vpc_id = fallback_vpc["Vpc"]["VpcId"]
+        vpc_map["default_vpc"] = fallback_vpc_id
+        ec2.create_tags(Resources=[fallback_vpc_id], Tags=[{'Key': 'Name', 'Value': 'mock-vpc'}])
         
-        if res_type == "aws_instance":
-            ami = attrs.get("ami") or attrs.get("image_id") or "ami-12c6146b"
-            instance_type = attrs.get("instance_type") or "t3.micro"
-            az = attrs.get("availability_zone") or f"{region}a"
+        # Fallback subnets
+        subnet_a = ec2.create_subnet(VpcId=fallback_vpc_id, CidrBlock='10.0.1.0/24', AvailabilityZone=f'{region}a')
+        subnet_b = ec2.create_subnet(VpcId=fallback_vpc_id, CidrBlock='10.0.2.0/24', AvailabilityZone=f'{region}b')
+        subnet_map["default_subnet_a"] = subnet_a['Subnet']['SubnetId']
+        subnet_map["default_subnet_b"] = subnet_b['Subnet']['SubnetId']
+
+    for r in mock_data.get("resources", []):
+        r_type = r.get("type")
+        r_id = r.get("id")
+        r_name = r.get("name")
+        attrs = r.get("attributes", {})
+        
+        if r_type == "aws_vpc":
+            cidr = r.get("cidr_block") or attrs.get("cidr_block") or "10.0.0.0/16"
+            resp = ec2.create_vpc(CidrBlock=cidr)
+            v_id = resp["Vpc"]["VpcId"]
+            vpc_map[r_id] = v_id
+            if r_name:
+                vpc_map[r_name] = v_id
+            ec2.create_tags(Resources=[v_id], Tags=[{'Key': 'Name', 'Value': r_name or r_id}])
             
-            target_subnet = None
-            for key, val in subnets.items():
-                if key.endswith(az[-2:]):
-                    target_subnet = val
-                    break
-            if not target_subnet:
-                target_subnet = list(subnets.values())[0]
-                
-            run_resp = ec2.run_instances(
-                ImageId=ami,
-                InstanceType=instance_type,
-                MinCount=1,
-                MaxCount=1,
-                SubnetId=target_subnet
-            )
-            inst_id = run_resp['Instances'][0]['InstanceId']
-            
-            ec2.create_tags(Resources=[inst_id], Tags=[
-                {'Key': 'Name', 'Value': res_name or res_id}
-            ])
-            
-        elif res_type == "aws_s3_bucket":
-            bucket_name = res_id or res_name
+        elif r_type == "aws_s3_bucket":
+            bucket_name = r_id or r_name
             try:
                 if region == "us-east-1":
                     s3.create_bucket(Bucket=bucket_name)
@@ -724,7 +690,6 @@ def test_fetcher_locally():
                         Bucket=bucket_name,
                         CreateBucketConfiguration={'LocationConstraint': region}
                     )
-                
                 versioning = attrs.get("versioning")
                 if versioning == "Enabled" or (isinstance(versioning, dict) and versioning.get("status") == "Enabled"):
                     s3.put_bucket_versioning(
@@ -734,13 +699,172 @@ def test_fetcher_locally():
             except Exception as s3_err:
                 print(f"[Local Test] Error creating S3 bucket {bucket_name}: {str(s3_err)}")
                 
-        elif res_type == "aws_db_instance":
-            db_id = res_id or res_name
+        elif r_type == "aws_iam_role":
+            role_name = r_name or r_id
+            assume_policy = r.get("assume_role_policy") or attrs.get("assume_role_policy", "lambda.amazonaws.com")
+            policy_doc = {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Principal": {
+                            "Service": assume_policy
+                        },
+                        "Action": "sts:AssumeRole"
+                    }
+                ]
+            }
+            try:
+                resp = iam.create_role(
+                    RoleName=role_name,
+                    AssumeRolePolicyDocument=json.dumps(policy_doc)
+                )
+                role_arn = resp["Role"]["Arn"]
+                iam_role_map[r_id] = role_arn
+                if r_name:
+                    iam_role_map[r_name] = role_arn
+            except Exception as iam_err:
+                print(f"[Local Test] Error creating IAM role {role_name}: {str(iam_err)}")
+
+    # 2. Pass Two: Create Subnets, Security Groups, SQS, DynamoDB (Requires VPC mapping)
+    for r in mock_data.get("resources", []):
+        r_type = r.get("type")
+        r_id = r.get("id")
+        r_name = r.get("name")
+        attrs = r.get("attributes", {})
+        
+        if r_type == "aws_subnet":
+            vpc_ref = r.get("vpc_id") or attrs.get("vpc_id")
+            real_vpc_id = vpc_map.get(vpc_ref) or list(vpc_map.values())[0]
+            cidr = r.get("cidr_block") or attrs.get("cidr_block") or "10.0.1.0/24"
+            az = r.get("availability_zone") or attrs.get("availability_zone") or f"{region}a"
+            
+            resp = ec2.create_subnet(VpcId=real_vpc_id, CidrBlock=cidr, AvailabilityZone=az)
+            s_id = resp["Subnet"]["SubnetId"]
+            subnet_map[r_id] = s_id
+            if r_name:
+                subnet_map[r_name] = s_id
+            ec2.create_tags(Resources=[s_id], Tags=[{'Key': 'Name', 'Value': r_name or r_id}])
+            
+        elif r_type == "aws_security_group":
+            vpc_ref = r.get("vpc_id") or attrs.get("vpc_id")
+            real_vpc_id = vpc_map.get(vpc_ref) or list(vpc_map.values())[0]
+            sg_name = r_name or r_id or "mock-sg"
+            
+            resp = ec2.create_security_group(GroupName=sg_name, Description=attrs.get("description", "Mock SG"), VpcId=real_vpc_id)
+            g_id = resp["GroupId"]
+            sg_map[r_id] = g_id
+            if r_name:
+                sg_map[r_name] = g_id
+                
+        elif r_type == "aws_dynamodb_table":
+            table_name = r_name or r_id
+            hash_key = r.get("hash_key") or attrs.get("hash_key", "id")
+            range_key = r.get("range_key") or attrs.get("range_key")
+            
+            key_schema = [{'AttributeName': hash_key, 'KeyType': 'HASH'}]
+            attr_defs = [{'AttributeName': hash_key, 'AttributeType': 'S'}]
+            
+            if range_key:
+                key_schema.append({'AttributeName': range_key, 'KeyType': 'RANGE'})
+                attr_defs.append({'AttributeName': range_key, 'AttributeType': 'S'})
+                
+            try:
+                dynamodb.create_table(
+                    TableName=table_name,
+                    KeySchema=key_schema,
+                    AttributeDefinitions=attr_defs,
+                    BillingMode=r.get("billing_mode") or attrs.get("billing_mode", "PAY_PER_REQUEST")
+                )
+            except Exception as dy_err:
+                print(f"[Local Test] Error creating DynamoDB table {table_name}: {str(dy_err)}")
+
+        elif r_type == "aws_sqs_queue":
+            queue_name = r_name or r_id
+            queue_attrs = {}
+            redrive_policy = r.get("redrive_policy") or attrs.get("redrive_policy")
+            if redrive_policy:
+                queue_attrs['RedrivePolicy'] = redrive_policy
+            try:
+                sqs.create_queue(
+                    QueueName=queue_name,
+                    Attributes=queue_attrs
+                )
+            except Exception as sqs_err:
+                print(f"[Local Test] Error creating SQS queue {queue_name}: {str(sqs_err)}")
+
+    # 3. Pass Three: Create Compute (EC2, Lambda, RDS) (Requires Subnet, SG, IAM Role maps)
+    for r in mock_data.get("resources", []):
+        r_type = r.get("type")
+        r_id = r.get("id")
+        r_name = r.get("name")
+        attrs = r.get("attributes", {})
+        
+        if r_type == "aws_instance":
+            ami = attrs.get("ami") or attrs.get("image_id") or "ami-12c6146b"
+            instance_type = attrs.get("instance_type") or "t3.micro"
+            
+            subnet_ref = r.get("subnet_id") or attrs.get("subnet_id")
+            real_subnet_id = subnet_map.get(subnet_ref) or list(subnet_map.values())[0]
+            
+            sg_refs = r.get("vpc_security_group_ids") or attrs.get("security_groups") or []
+            real_sg_ids = [sg_map.get(sg) for sg in sg_refs if sg in sg_map]
+            
+            run_resp = ec2.run_instances(
+                ImageId=ami,
+                InstanceType=instance_type,
+                MinCount=1,
+                MaxCount=1,
+                SubnetId=real_subnet_id,
+                SecurityGroupIds=real_sg_ids
+            )
+            inst_id = run_resp['Instances'][0]['InstanceId']
+            ec2.create_tags(Resources=[inst_id], Tags=[{'Key': 'Name', 'Value': r_name or r_id}])
+            
+        elif r_type == "aws_lambda_function":
+            func_name = r.get("function_name") or attrs.get("function_name") or r_id
+            role_ref = r.get("role") or attrs.get("role")
+            role_arn = iam_role_map.get(role_ref) or role_ref or f"arn:aws:iam::{mock_data.get('account_id', '123456789012')}:role/default"
+            handler = r.get("handler") or attrs.get("handler", "index.handler")
+            runtime = r.get("runtime") or attrs.get("runtime", "nodejs20.x")
+            
+            import zipfile
+            import io
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, 'a', zipfile.ZIP_DEFLATED, False) as zip_file:
+                zip_file.writestr('index.js', 'exports.handler = async (event) => { return {}; };')
+            zip_buffer.seek(0)
+            zip_bytes = zip_buffer.read()
+            
+            try:
+                lambda_client.create_function(
+                    FunctionName=func_name,
+                    Runtime=runtime,
+                    Role=role_arn,
+                    Handler=handler,
+                    Code={'ZipFile': zip_bytes}
+                )
+            except Exception as lam_err:
+                print(f"[Local Test] Error creating Lambda function {func_name}: {str(lam_err)}")
+
+        elif r_type == "aws_lambda_event_source_mapping":
+            event_source = r.get("event_source_arn") or attrs.get("event_source_arn")
+            func_name = r.get("function_name") or attrs.get("function_name")
+            try:
+                lambda_client.create_event_source_mapping(
+                    EventSourceArn=event_source,
+                    FunctionName=func_name
+                )
+            except Exception as es_err:
+                print(f"[Local Test] Error creating Event Source Mapping: {str(es_err)}")
+
+        elif r_type == "aws_db_instance":
+            db_id = r_id or r_name
             engine = attrs.get("engine", "postgres")
             instance_class = attrs.get("instance_class", "db.t3.micro")
             allocated_storage = attrs.get("allocated_storage", 20)
             
-            sng_subnets = list(subnets.values())[:2]
+            sng_subnets = list(subnet_map.values())[:2]
             try:
                 rds.create_db_subnet_group(
                     DBSubnetGroupName='default',
@@ -762,101 +886,6 @@ def test_fetcher_locally():
                 )
             except Exception as rds_err:
                 print(f"[Local Test] Error creating DB instance {db_id}: {str(rds_err)}")
-
-        elif res_type == "aws_dynamodb_table":
-            table_name = res_name or res_id
-            hash_key = res.get("hash_key") or attrs.get("hash_key", "id")
-            range_key = res.get("range_key") or attrs.get("range_key")
-            
-            key_schema = [{'AttributeName': hash_key, 'KeyType': 'HASH'}]
-            attr_defs = [{'AttributeName': hash_key, 'AttributeType': 'S'}]
-            
-            if range_key:
-                key_schema.append({'AttributeName': range_key, 'KeyType': 'RANGE'})
-                attr_defs.append({'AttributeName': range_key, 'AttributeType': 'S'})
-                
-            try:
-                dynamodb.create_table(
-                    TableName=table_name,
-                    KeySchema=key_schema,
-                    AttributeDefinitions=attr_defs,
-                    BillingMode=res.get("billing_mode") or attrs.get("billing_mode", "PAY_PER_REQUEST")
-                )
-            except Exception as dy_err:
-                print(f"[Local Test] Error creating DynamoDB table {table_name}: {str(dy_err)}")
-
-        elif res_type == "aws_sqs_queue":
-            queue_name = res_name or res_id
-            queue_attrs = {}
-            redrive_policy = res.get("redrive_policy") or attrs.get("redrive_policy")
-            if redrive_policy:
-                queue_attrs['RedrivePolicy'] = redrive_policy
-            try:
-                sqs.create_queue(
-                    QueueName=queue_name,
-                    Attributes=queue_attrs
-                )
-            except Exception as sqs_err:
-                print(f"[Local Test] Error creating SQS queue {queue_name}: {str(sqs_err)}")
-
-        elif res_type == "aws_iam_role":
-            role_name = res_name or res_id
-            assume_policy = res.get("assume_role_policy") or attrs.get("assume_role_policy", "lambda.amazonaws.com")
-            policy_doc = {
-                "Version": "2012-10-17",
-                "Statement": [
-                    {
-                        "Effect": "Allow",
-                        "Principal": {
-                            "Service": assume_policy
-                        },
-                        "Action": "sts:AssumeRole"
-                    }
-                ]
-            }
-            try:
-                iam.create_role(
-                    RoleName=role_name,
-                    AssumeRolePolicyDocument=json.dumps(policy_doc)
-                )
-            except Exception as iam_err:
-                print(f"[Local Test] Error creating IAM role {role_name}: {str(iam_err)}")
-
-        elif res_type == "aws_lambda_function":
-            func_name = res.get("function_name") or attrs.get("function_name") or res_id
-            role_arn = res.get("role") or attrs.get("role") or f"arn:aws:iam::{mock_data.get('account_id', '123456789012')}:role/default"
-            handler = res.get("handler") or attrs.get("handler", "index.handler")
-            runtime = res.get("runtime") or attrs.get("runtime", "nodejs20.x")
-            
-            import zipfile
-            import io
-            zip_buffer = io.BytesIO()
-            with zipfile.ZipFile(zip_buffer, 'a', zipfile.ZIP_DEFLATED, False) as zip_file:
-                zip_file.writestr('index.js', 'exports.handler = async (event) => { return {}; };')
-            zip_buffer.seek(0)
-            zip_bytes = zip_buffer.read()
-            
-            try:
-                lambda_client.create_function(
-                    FunctionName=func_name,
-                    Runtime=runtime,
-                    Role=role_arn,
-                    Handler=handler,
-                    Code={'ZipFile': zip_bytes}
-                )
-            except Exception as lam_err:
-                print(f"[Local Test] Error creating Lambda function {func_name}: {str(lam_err)}")
-
-        elif res_type == "aws_lambda_event_source_mapping":
-            event_source = res.get("event_source_arn") or attrs.get("event_source_arn")
-            func_name = res.get("function_name") or attrs.get("function_name")
-            try:
-                lambda_client.create_event_source_mapping(
-                    EventSourceArn=event_source,
-                    FunctionName=func_name
-                )
-            except Exception as es_err:
-                print(f"[Local Test] Error creating Event Source Mapping: {str(es_err)}")
 
     print("[Local Test] Fetching data using your upgraded function...")
     data = fetch_live_infrastructure(region_name=region)
