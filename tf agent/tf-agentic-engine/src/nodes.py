@@ -11,6 +11,7 @@ from src.utils import (
     COMPUTE_PROMPT,
     DATA_PROMPT,
     filter_aws_input_data,
+    COMPLIANCE_RULES,
 )
 
 
@@ -195,8 +196,24 @@ def generate_network_node(state: GraphState) -> dict:
                 "vpc_id": aws_input.get("vpc_id"),
                 "resources": [resource]
             }
+            single_prompt = f"""
+            You are a strict, literal Terraform translator.
+            Generate the HCL block for THIS EXACT RESOURCE ONLY:
+            Type: {resource.get('type')}
+            ID/Name: {resource.get('id') or resource.get('name')}
+            
+            CRITICAL DIRECTIVES:
+            1. ONLY output the HCL block for the single resource defined above.
+            2. DO NOT synthesize any other resources (like VPCs, subnets, internet gateways, or route tables) unless it is this exact resource.
+            3. You MUST use the exact resource identifier/name (cleaned to replace hyphens with underscores in local labels) as the Terraform resource block identifier. Do NOT rename it 'main', 'public', or 'private'.
+            4. In import blocks, the 'to' attribute MUST be exactly '{resource.get('type')}.{resource.get('id') or resource.get('name')}' (or cleaned label).
+            """ + "\n" + mode_instructions + "\n" + network_constraint + "\n" + COMPLIANCE_RULES
+            
+            if val_errors:
+                single_prompt = val_errors + "\n" + single_prompt
+                
             block = call_cloud_llm(
-                prompt,
+                single_prompt,
                 {
                     "aws_input_data": single_input,
                     "user_prompt": prompt_user,
@@ -323,8 +340,24 @@ def generate_security_node(state: GraphState) -> dict:
                 "vpc_id": aws_input.get("vpc_id"),
                 "resources": [resource]
             }
+            single_prompt = f"""
+            You are a strict, literal Terraform translator.
+            Generate the HCL block for THIS EXACT RESOURCE ONLY:
+            Type: {resource.get('type')}
+            ID/Name: {resource.get('id') or resource.get('name')}
+            
+            CRITICAL DIRECTIVES:
+            1. ONLY output the HCL block for the single resource defined above.
+            2. DO NOT synthesize any other resources unless it is this exact resource.
+            3. You MUST use the exact resource identifier/name (cleaned to replace hyphens with underscores in local labels) as the Terraform resource block identifier. Do NOT name it 'main', 'public', or 'private'.
+            4. In import blocks, the 'to' attribute MUST be exactly '{resource.get('type')}.{resource.get('id') or resource.get('name')}' (or cleaned label).
+            """ + "\n" + mode_instructions + "\n" + security_constraint + "\n" + COMPLIANCE_RULES
+            
+            if val_errors:
+                single_prompt = val_errors + "\n" + single_prompt
+                
             block = call_cloud_llm(
-                prompt,
+                single_prompt,
                 {
                     "aws_input_data": single_input,
                     "user_prompt": prompt_user,
@@ -500,8 +533,24 @@ def generate_compute_node(state: GraphState) -> dict:
                 "vpc_id": aws_input.get("vpc_id"),
                 "resources": [resource]
             }
+            single_prompt = f"""
+            You are a strict, literal Terraform translator.
+            Generate the HCL block for THIS EXACT RESOURCE ONLY:
+            Type: {resource.get('type')}
+            ID/Name: {resource.get('id') or resource.get('name')}
+            
+            CRITICAL DIRECTIVES:
+            1. ONLY output the HCL block for the single resource defined above.
+            2. DO NOT synthesize any other resources unless it is this exact resource.
+            3. You MUST use the exact resource identifier/name (cleaned to replace hyphens with underscores in local labels) as the Terraform resource block identifier. Do NOT name it 'main', 'public', or 'private'.
+            4. In import blocks, the 'to' attribute MUST be exactly '{resource.get('type')}.{resource.get('id') or resource.get('name')}' (or cleaned label).
+            """ + "\n" + mode_instructions + "\n" + compute_data_constraints + "\n" + COMPLIANCE_RULES
+            
+            if val_errors:
+                single_prompt = val_errors + "\n" + single_prompt
+                
             block = call_cloud_llm(
-                prompt,
+                single_prompt,
                 {
                     "aws_input_data": single_input,
                     "user_prompt": prompt_user,
@@ -648,8 +697,24 @@ def generate_data_node(state: GraphState) -> dict:
                 "vpc_id": aws_input.get("vpc_id"),
                 "resources": [resource]
             }
+            single_prompt = f"""
+            You are a strict, literal Terraform translator.
+            Generate the HCL block for THIS EXACT RESOURCE ONLY:
+            Type: {resource.get('type')}
+            ID/Name: {resource.get('id') or resource.get('name')}
+            
+            CRITICAL DIRECTIVES:
+            1. ONLY output the HCL block for the single resource defined above.
+            2. DO NOT synthesize any other resources unless it is this exact resource.
+            3. You MUST use the exact resource identifier/name (cleaned to replace hyphens with underscores in local labels) as the Terraform resource block identifier. Do NOT name it 'main', 'public', or 'private'.
+            4. In import blocks, the 'to' attribute MUST be exactly '{resource.get('type')}.{resource.get('id') or resource.get('name')}' (or cleaned label).
+            """ + "\n" + mode_instructions + "\n" + compute_data_constraints + "\n" + COMPLIANCE_RULES
+            
+            if val_errors:
+                single_prompt = val_errors + "\n" + single_prompt
+                
             block = call_cloud_llm(
-                prompt,
+                single_prompt,
                 {
                     "aws_input_data": single_input,
                     "user_prompt": prompt_user,
