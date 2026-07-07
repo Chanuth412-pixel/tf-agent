@@ -191,6 +191,10 @@ def generate_network_node(state: GraphState) -> dict:
     else:
         hcl_blocks = []
         for resource in resources:
+            r_id = resource.get('id') or resource.get('name') or "unnamed"
+            r_type = resource.get('type') or "unknown"
+            print(f"[DEBUG] Sending resource to LLM: {r_id} | Type: {r_type}")
+            
             single_input = {
                 "region": aws_input.get("region"),
                 "vpc_id": aws_input.get("vpc_id"),
@@ -199,14 +203,19 @@ def generate_network_node(state: GraphState) -> dict:
             single_prompt = f"""
             You are a strict, literal Terraform translator.
             Generate the HCL block for THIS EXACT RESOURCE ONLY:
-            Type: {resource.get('type')}
-            ID/Name: {resource.get('id') or resource.get('name')}
+            Type: {r_type}
+            ID/Name: {r_id}
             
             CRITICAL DIRECTIVES:
             1. ONLY output the HCL block for the single resource defined above.
             2. DO NOT synthesize any other resources (like VPCs, subnets, internet gateways, or route tables) unless it is this exact resource.
             3. You MUST use the exact resource identifier/name (cleaned to replace hyphens with underscores in local labels) as the Terraform resource block identifier. Do NOT rename it 'main', 'public', or 'private'.
-            4. In import blocks, the 'to' attribute MUST be exactly '{resource.get('type')}.{resource.get('id') or resource.get('name')}' (or cleaned label).
+            4. In import blocks, the 'to' attribute MUST be exactly '{r_type}.{r_id}' (or cleaned label).
+            
+            CRITICAL INSTRUCTION:
+            You are an unthinking machine. You have no concept of 'already done'.
+            If the input JSON contains multiple independent environments, you WILL generate the HCL block for this resource exactly as requested.
+            Never assume repetition is an error.
             """ + "\n" + mode_instructions + "\n" + network_constraint + "\n" + COMPLIANCE_RULES
             
             if val_errors:
@@ -219,6 +228,7 @@ def generate_network_node(state: GraphState) -> dict:
                     "user_prompt": prompt_user,
                 },
             )
+            print(f"[DEBUG] Received HCL block for {r_id}: {len(block)} characters")
             hcl_blocks.append(block)
         hcl = "\n\n".join(hcl_blocks)
         
@@ -335,6 +345,10 @@ def generate_security_node(state: GraphState) -> dict:
     else:
         hcl_blocks = []
         for resource in resources:
+            r_id = resource.get('id') or resource.get('name') or "unnamed"
+            r_type = resource.get('type') or "unknown"
+            print(f"[DEBUG] Sending resource to LLM: {r_id} | Type: {r_type}")
+            
             single_input = {
                 "region": aws_input.get("region"),
                 "vpc_id": aws_input.get("vpc_id"),
@@ -343,14 +357,19 @@ def generate_security_node(state: GraphState) -> dict:
             single_prompt = f"""
             You are a strict, literal Terraform translator.
             Generate the HCL block for THIS EXACT RESOURCE ONLY:
-            Type: {resource.get('type')}
-            ID/Name: {resource.get('id') or resource.get('name')}
+            Type: {r_type}
+            ID/Name: {r_id}
             
             CRITICAL DIRECTIVES:
             1. ONLY output the HCL block for the single resource defined above.
             2. DO NOT synthesize any other resources unless it is this exact resource.
             3. You MUST use the exact resource identifier/name (cleaned to replace hyphens with underscores in local labels) as the Terraform resource block identifier. Do NOT name it 'main', 'public', or 'private'.
-            4. In import blocks, the 'to' attribute MUST be exactly '{resource.get('type')}.{resource.get('id') or resource.get('name')}' (or cleaned label).
+            4. In import blocks, the 'to' attribute MUST be exactly '{r_type}.{r_id}' (or cleaned label).
+            
+            CRITICAL INSTRUCTION:
+            You are an unthinking machine. You have no concept of 'already done'.
+            If the input JSON contains multiple independent environments, you WILL generate the HCL block for this resource exactly as requested.
+            Never assume repetition is an error.
             """ + "\n" + mode_instructions + "\n" + security_constraint + "\n" + COMPLIANCE_RULES
             
             if val_errors:
@@ -367,6 +386,7 @@ def generate_security_node(state: GraphState) -> dict:
                     ),
                 },
             )
+            print(f"[DEBUG] Received HCL block for {r_id}: {len(block)} characters")
             hcl_blocks.append(block)
         hcl = "\n\n".join(hcl_blocks)
         
@@ -528,6 +548,10 @@ def generate_compute_node(state: GraphState) -> dict:
     else:
         hcl_blocks = []
         for resource in resources:
+            r_id = resource.get('id') or resource.get('name') or "unnamed"
+            r_type = resource.get('type') or "unknown"
+            print(f"[DEBUG] Sending resource to LLM: {r_id} | Type: {r_type}")
+            
             single_input = {
                 "region": aws_input.get("region"),
                 "vpc_id": aws_input.get("vpc_id"),
@@ -536,14 +560,19 @@ def generate_compute_node(state: GraphState) -> dict:
             single_prompt = f"""
             You are a strict, literal Terraform translator.
             Generate the HCL block for THIS EXACT RESOURCE ONLY:
-            Type: {resource.get('type')}
-            ID/Name: {resource.get('id') or resource.get('name')}
+            Type: {r_type}
+            ID/Name: {r_id}
             
             CRITICAL DIRECTIVES:
             1. ONLY output the HCL block for the single resource defined above.
             2. DO NOT synthesize any other resources unless it is this exact resource.
             3. You MUST use the exact resource identifier/name (cleaned to replace hyphens with underscores in local labels) as the Terraform resource block identifier. Do NOT name it 'main', 'public', or 'private'.
-            4. In import blocks, the 'to' attribute MUST be exactly '{resource.get('type')}.{resource.get('id') or resource.get('name')}' (or cleaned label).
+            4. In import blocks, the 'to' attribute MUST be exactly '{r_type}.{r_id}' (or cleaned label).
+            
+            CRITICAL INSTRUCTION:
+            You are an unthinking machine. You have no concept of 'already done'.
+            If the input JSON contains multiple independent environments, you WILL generate the HCL block for this resource exactly as requested.
+            Never assume repetition is an error.
             """ + "\n" + mode_instructions + "\n" + compute_data_constraints + "\n" + COMPLIANCE_RULES
             
             if val_errors:
@@ -565,6 +594,7 @@ def generate_compute_node(state: GraphState) -> dict:
                     ),
                 },
             )
+            print(f"[DEBUG] Received HCL block for {r_id}: {len(block)} characters")
             hcl_blocks.append(block)
         hcl = "\n\n".join(hcl_blocks)
         
@@ -692,6 +722,10 @@ def generate_data_node(state: GraphState) -> dict:
     else:
         hcl_blocks = []
         for resource in resources:
+            r_id = resource.get('id') or resource.get('name') or "unnamed"
+            r_type = resource.get('type') or "unknown"
+            print(f"[DEBUG] Sending resource to LLM: {r_id} | Type: {r_type}")
+            
             single_input = {
                 "region": aws_input.get("region"),
                 "vpc_id": aws_input.get("vpc_id"),
@@ -700,14 +734,19 @@ def generate_data_node(state: GraphState) -> dict:
             single_prompt = f"""
             You are a strict, literal Terraform translator.
             Generate the HCL block for THIS EXACT RESOURCE ONLY:
-            Type: {resource.get('type')}
-            ID/Name: {resource.get('id') or resource.get('name')}
+            Type: {r_type}
+            ID/Name: {r_id}
             
             CRITICAL DIRECTIVES:
             1. ONLY output the HCL block for the single resource defined above.
             2. DO NOT synthesize any other resources unless it is this exact resource.
             3. You MUST use the exact resource identifier/name (cleaned to replace hyphens with underscores in local labels) as the Terraform resource block identifier. Do NOT name it 'main', 'public', or 'private'.
-            4. In import blocks, the 'to' attribute MUST be exactly '{resource.get('type')}.{resource.get('id') or resource.get('name')}' (or cleaned label).
+            4. In import blocks, the 'to' attribute MUST be exactly '{r_type}.{r_id}' (or cleaned label).
+            
+            CRITICAL INSTRUCTION:
+            You are an unthinking machine. You have no concept of 'already done'.
+            If the input JSON contains multiple independent environments, you WILL generate the HCL block for this resource exactly as requested.
+            Never assume repetition is an error.
             """ + "\n" + mode_instructions + "\n" + compute_data_constraints + "\n" + COMPLIANCE_RULES
             
             if val_errors:
@@ -729,6 +768,7 @@ def generate_data_node(state: GraphState) -> dict:
                     ),
                 },
             )
+            print(f"[DEBUG] Received HCL block for {r_id}: {len(block)} characters")
             hcl_blocks.append(block)
         hcl = "\n\n".join(hcl_blocks)
         
