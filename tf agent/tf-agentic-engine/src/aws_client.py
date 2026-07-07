@@ -25,6 +25,8 @@ def fetch_live_infrastructure(region_name=None):
     autoscaling = boto3.client('autoscaling', region_name=region_name)
     dynamodb = boto3.client('dynamodb', region_name=region_name)
     rds = boto3.client('rds', region_name=region_name)
+    sqs = boto3.client('sqs', region_name=region_name)
+    lambda_client = boto3.client('lambda', region_name=region_name)
     
     resources = []
     vpc_id = None
@@ -141,12 +143,13 @@ def fetch_live_infrastructure(region_name=None):
         try:
             roles_resp = iam.list_roles(MaxItems=50)
             for role in roles_resp.get('Roles', []):
-                # Fetching custom roles (filtering as in the user's code snippet)
-                if 'tf-engine' in role['RoleName'] or 'test' in role['RoleName']:
+                role_name = role['RoleName']
+                # Fetching custom roles (excluding standard AWS service roles)
+                if not role_name.startswith("AWSServiceRoleFor"):
                     resources.append({
                         "type": "aws_iam_role",
-                        "id": role['RoleName'],
-                        "name": role['RoleName'],
+                        "id": role_name,
+                        "name": role_name,
                         "arn": role['Arn'],
                         "description": role.get('Description', '')
                     })
@@ -360,6 +363,53 @@ def fetch_live_infrastructure(region_name=None):
                 })
         except Exception as rds_err:
             logger.warning(f"Failed to fetch RDS DB instances: {str(rds_err)}")
+
+        # --- SQS RESOURCES ---
+        try:
+            queues_resp = sqs.list_queues()
+            for queue_url in queues_resp.get('QueueUrls', []):
+                queue_name = queue_url.split('/')[-1]
+                attrs_resp = sqs.get_queue_attributes(
+                    QueueUrl=queue_url,
+                    AttributeNames=['All']
+                )
+                q_attrs = attrs_resp.get('Attributes', {})
+                resources.append({
+                    "type": "aws_sqs_queue",
+                    "id": queue_name,
+                    "name": queue_name,
+                    "redrive_policy": q_attrs.get('RedrivePolicy')
+                })
+        except Exception as sqs_scan_err:
+            logger.warning(f"Failed to fetch SQS queues: {str(sqs_scan_err)}")
+
+        # --- LAMBDA RESOURCES ---
+        try:
+            funcs_resp = lambda_client.list_functions()
+            for func in funcs_resp.get('Functions', []):
+                func_name = func['FunctionName']
+                resources.append({
+                    "type": "aws_lambda_function",
+                    "id": func_name,
+                    "function_name": func_name,
+                    "role": func['Role'],
+                    "handler": func['Handler'],
+                    "runtime": func['Runtime']
+                })
+                
+                try:
+                    mappings_resp = lambda_client.list_event_source_mappings(FunctionName=func_name)
+                    for mapping in mappings_resp.get('EventSourceMappings', []):
+                        resources.append({
+                            "type": "aws_lambda_event_source_mapping",
+                            "id": mapping['UUID'],
+                            "event_source_arn": mapping['EventSourceArn'],
+                            "function_name": func_name
+                        })
+                except Exception as es_scan_err:
+                    logger.warning(f"Failed to fetch Event Source Mappings for {func_name}: {str(es_scan_err)}")
+        except Exception as lam_scan_err:
+            logger.warning(f"Failed to fetch Lambda functions: {str(lam_scan_err)}")
 
         logger.info("Successfully fetched complete live infrastructure.")
         
@@ -590,6 +640,10 @@ def test_fetcher_locally():
     ec2 = boto3.client('ec2', region_name=region)
     s3 = boto3.client('s3', region_name=region)
     rds = boto3.client('rds', region_name=region)
+    dynamodb = boto3.client('dynamodb', region_name=region)
+    sqs = boto3.client('sqs', region_name=region)
+    iam = boto3.client('iam', region_name=region)
+    lambda_client = boto3.client('lambda', region_name=region)
     
     # Create the VPC based on JSON configuration
     vpc_cidr = "10.0.0.0/16"
@@ -708,6 +762,101 @@ def test_fetcher_locally():
                 )
             except Exception as rds_err:
                 print(f"[Local Test] Error creating DB instance {db_id}: {str(rds_err)}")
+
+        elif res_type == "aws_dynamodb_table":
+            table_name = res_name or res_id
+            hash_key = res.get("hash_key") or attrs.get("hash_key", "id")
+            range_key = res.get("range_key") or attrs.get("range_key")
+            
+            key_schema = [{'AttributeName': hash_key, 'KeyType': 'HASH'}]
+            attr_defs = [{'AttributeName': hash_key, 'AttributeType': 'S'}]
+            
+            if range_key:
+                key_schema.append({'AttributeName': range_key, 'KeyType': 'RANGE'})
+                attr_defs.append({'AttributeName': range_key, 'AttributeType': 'S'})
+                
+            try:
+                dynamodb.create_table(
+                    TableName=table_name,
+                    KeySchema=key_schema,
+                    AttributeDefinitions=attr_defs,
+                    BillingMode=res.get("billing_mode") or attrs.get("billing_mode", "PAY_PER_REQUEST")
+                )
+            except Exception as dy_err:
+                print(f"[Local Test] Error creating DynamoDB table {table_name}: {str(dy_err)}")
+
+        elif res_type == "aws_sqs_queue":
+            queue_name = res_name or res_id
+            queue_attrs = {}
+            redrive_policy = res.get("redrive_policy") or attrs.get("redrive_policy")
+            if redrive_policy:
+                queue_attrs['RedrivePolicy'] = redrive_policy
+            try:
+                sqs.create_queue(
+                    QueueName=queue_name,
+                    Attributes=queue_attrs
+                )
+            except Exception as sqs_err:
+                print(f"[Local Test] Error creating SQS queue {queue_name}: {str(sqs_err)}")
+
+        elif res_type == "aws_iam_role":
+            role_name = res_name or res_id
+            assume_policy = res.get("assume_role_policy") or attrs.get("assume_role_policy", "lambda.amazonaws.com")
+            policy_doc = {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Principal": {
+                            "Service": assume_policy
+                        },
+                        "Action": "sts:AssumeRole"
+                    }
+                ]
+            }
+            try:
+                iam.create_role(
+                    RoleName=role_name,
+                    AssumeRolePolicyDocument=json.dumps(policy_doc)
+                )
+            except Exception as iam_err:
+                print(f"[Local Test] Error creating IAM role {role_name}: {str(iam_err)}")
+
+        elif res_type == "aws_lambda_function":
+            func_name = res.get("function_name") or attrs.get("function_name") or res_id
+            role_arn = res.get("role") or attrs.get("role") or f"arn:aws:iam::{mock_data.get('account_id', '123456789012')}:role/default"
+            handler = res.get("handler") or attrs.get("handler", "index.handler")
+            runtime = res.get("runtime") or attrs.get("runtime", "nodejs20.x")
+            
+            import zipfile
+            import io
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, 'a', zipfile.ZIP_DEFLATED, False) as zip_file:
+                zip_file.writestr('index.js', 'exports.handler = async (event) => { return {}; };')
+            zip_buffer.seek(0)
+            zip_bytes = zip_buffer.read()
+            
+            try:
+                lambda_client.create_function(
+                    FunctionName=func_name,
+                    Runtime=runtime,
+                    Role=role_arn,
+                    Handler=handler,
+                    Code={'ZipFile': zip_bytes}
+                )
+            except Exception as lam_err:
+                print(f"[Local Test] Error creating Lambda function {func_name}: {str(lam_err)}")
+
+        elif res_type == "aws_lambda_event_source_mapping":
+            event_source = res.get("event_source_arn") or attrs.get("event_source_arn")
+            func_name = res.get("function_name") or attrs.get("function_name")
+            try:
+                lambda_client.create_event_source_mapping(
+                    EventSourceArn=event_source,
+                    FunctionName=func_name
+                )
+            except Exception as es_err:
+                print(f"[Local Test] Error creating Event Source Mapping: {str(es_err)}")
 
     print("[Local Test] Fetching data using your upgraded function...")
     data = fetch_live_infrastructure(region_name=region)
