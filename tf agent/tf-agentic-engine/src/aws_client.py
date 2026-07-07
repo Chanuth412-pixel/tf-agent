@@ -571,111 +571,146 @@ def compile_infrastructure_graph(raw_data, mode):
 # --- UPGRADED LOCAL TESTING HARNESS ---
 @mock_aws
 def test_fetcher_locally():
-    print("[Local Test] Simulating a complex AWS environment...")
-    ec2 = boto3.client('ec2', region_name='us-east-1')
-    s3 = boto3.client('s3', region_name='us-east-1')
-    rds = boto3.client('rds', region_name='us-east-1')
+    print("[Local Test] Simulating a complex AWS environment from mock_infra.json...")
     
-    # Create VPC
-    vpc = ec2.create_vpc(CidrBlock='10.0.0.0/16')
-    vpc_id = vpc['Vpc']['VpcId']
+    import json
+    import os
     
-    # Create multi-tier subnets
-    subnet_public_1a = ec2.create_subnet(VpcId=vpc_id, CidrBlock='10.0.1.0/24', AvailabilityZone='us-east-1a')
-    subnet_public_1b = ec2.create_subnet(VpcId=vpc_id, CidrBlock='10.0.2.0/24', AvailabilityZone='us-east-1b')
-    subnet_private_1a = ec2.create_subnet(VpcId=vpc_id, CidrBlock='10.0.3.0/24', AvailabilityZone='us-east-1a')
-    subnet_private_1b = ec2.create_subnet(VpcId=vpc_id, CidrBlock='10.0.4.0/24', AvailabilityZone='us-east-1b')
+    file_dir = os.path.dirname(os.path.abspath(__file__))
+    json_path = os.path.join(file_dir, "..", "scanner", "mock_infra.json")
     
-    # Create Security Groups
-    sg_web = ec2.create_security_group(GroupName='web-traffic-sg', Description='Web traffic SG', VpcId=vpc_id)
-    sg_db = ec2.create_security_group(GroupName='database-traffic-sg', Description='Database traffic SG', VpcId=vpc_id)
+    try:
+        with open(json_path, 'r') as f:
+            mock_data = json.load(f)
+    except Exception as e:
+        print(f"[Local Test] Error loading mock_infra.json: {str(e)}")
+        mock_data = {}
+
+    region = mock_data.get("region", "us-east-1")
+    ec2 = boto3.client('ec2', region_name=region)
+    s3 = boto3.client('s3', region_name=region)
+    rds = boto3.client('rds', region_name=region)
     
-    # Authorize Security Group ingress rules
-    ec2.authorize_security_group_ingress(
-        GroupId=sg_web['GroupId'],
-        IpPermissions=[
-            {
-                'IpProtocol': 'tcp',
-                'FromPort': 80,
-                'ToPort': 80,
-                'IpRanges': [{'CidrIp': '0.0.0.0/0'}]
-            },
-            {
-                'IpProtocol': 'tcp',
-                'FromPort': 443,
-                'ToPort': 443,
-                'IpRanges': [{'CidrIp': '0.0.0.0/0'}]
-            }
-        ]
-    )
-    ec2.authorize_security_group_ingress(
-        GroupId=sg_db['GroupId'],
-        IpPermissions=[
-            {
-                'IpProtocol': 'tcp',
-                'FromPort': 5432,
-                'ToPort': 5432,
-                'UserIdGroupPairs': [{'GroupId': sg_web['GroupId']}]
-            }
-        ]
-    )
+    # Create the VPC based on JSON configuration
+    vpc_cidr = "10.0.0.0/16"
+    vpc = ec2.create_vpc(CidrBlock=vpc_cidr)
+    real_vpc_id = vpc['Vpc']['VpcId']
     
-    # Create EC2 Instances
-    ec2.run_instances(
-        ImageId='ami-12c6146b', 
-        MinCount=1, 
-        MaxCount=1, 
-        InstanceType='t3.medium', 
-        SubnetId=subnet_public_1a['Subnet']['SubnetId']
-    )
-    ec2.run_instances(
-        ImageId='ami-12c6146b', 
-        MinCount=1, 
-        MaxCount=1, 
-        InstanceType='t3.medium', 
-        SubnetId=subnet_public_1b['Subnet']['SubnetId']
-    )
+    # Tag the VPC so it's recognizable
+    ec2.create_tags(Resources=[real_vpc_id], Tags=[
+        {'Key': 'Name', 'Value': 'mock-vpc'},
+        {'Key': 'OriginalId', 'Value': mock_data.get("vpc_id", "")}
+    ])
     
-    # Create DB Subnet Group for RDS
-    rds.create_db_subnet_group(
-        DBSubnetGroupName='default',
-        DBSubnetGroupDescription='Default DB Subnet Group for local testing',
-        SubnetIds=[
-            subnet_private_1a['Subnet']['SubnetId'],
-            subnet_private_1b['Subnet']['SubnetId']
-        ]
-    )
+    # Track created subnets
+    subnets = {}
     
-    # Create RDS Database Instance
-    rds.create_db_instance(
-        DBInstanceIdentifier='db-master',
-        DBInstanceClass='db.t3.micro',
-        Engine='postgres',
-        AllocatedStorage=20,
-        MasterUsername='admin',
-        MasterUserPassword='TempPassword123!',
-        DBSubnetGroupName='default'  # Using default subnet group for testing
-    )
-    
-    # Create S3 Bucket
-    s3.create_bucket(Bucket='enterprise-backup-vault-2026')
+    # First pass: Create subnets if defined in resources
+    for res in mock_data.get("resources", []):
+        res_type = res.get("type")
+        if res_type == "aws_subnet":
+            attrs = res.get("attributes", {})
+            cidr = attrs.get("cidr_block", "10.0.1.0/24")
+            az = attrs.get("availability_zone", f"{region}a")
+            sub = ec2.create_subnet(VpcId=real_vpc_id, CidrBlock=cidr, AvailabilityZone=az)
+            sub_id = sub['Subnet']['SubnetId']
+            
+            name = res.get("name") or res.get("id")
+            ec2.create_tags(Resources=[sub_id], Tags=[{'Key': 'Name', 'Value': name}])
+            subnets[res.get("id")] = sub_id
+            subnets[name] = sub_id
+            
+    # Fallback default subnets if none defined in JSON
+    if not subnets:
+        subnet_a = ec2.create_subnet(VpcId=real_vpc_id, CidrBlock='10.0.1.0/24', AvailabilityZone=f'{region}a')
+        subnet_b = ec2.create_subnet(VpcId=real_vpc_id, CidrBlock='10.0.2.0/24', AvailabilityZone=f'{region}b')
+        subnets['default_a'] = subnet_a['Subnet']['SubnetId']
+        subnets['default_b'] = subnet_b['Subnet']['SubnetId']
+
+    # Second pass: Create instances, S3 buckets, and RDS databases
+    for res in mock_data.get("resources", []):
+        res_type = res.get("type")
+        res_id = res.get("id")
+        res_name = res.get("name")
+        attrs = res.get("attributes", {})
+        
+        if res_type == "aws_instance":
+            ami = attrs.get("ami") or attrs.get("image_id") or "ami-12c6146b"
+            instance_type = attrs.get("instance_type") or "t3.micro"
+            az = attrs.get("availability_zone") or f"{region}a"
+            
+            target_subnet = None
+            for key, val in subnets.items():
+                if key.endswith(az[-2:]):
+                    target_subnet = val
+                    break
+            if not target_subnet:
+                target_subnet = list(subnets.values())[0]
+                
+            run_resp = ec2.run_instances(
+                ImageId=ami,
+                InstanceType=instance_type,
+                MinCount=1,
+                MaxCount=1,
+                SubnetId=target_subnet
+            )
+            inst_id = run_resp['Instances'][0]['InstanceId']
+            
+            ec2.create_tags(Resources=[inst_id], Tags=[
+                {'Key': 'Name', 'Value': res_name or res_id}
+            ])
+            
+        elif res_type == "aws_s3_bucket":
+            bucket_name = res_id or res_name
+            try:
+                if region == "us-east-1":
+                    s3.create_bucket(Bucket=bucket_name)
+                else:
+                    s3.create_bucket(
+                        Bucket=bucket_name,
+                        CreateBucketConfiguration={'LocationConstraint': region}
+                    )
+                
+                versioning = attrs.get("versioning")
+                if versioning == "Enabled" or (isinstance(versioning, dict) and versioning.get("status") == "Enabled"):
+                    s3.put_bucket_versioning(
+                        Bucket=bucket_name,
+                        VersioningConfiguration={'Status': 'Enabled'}
+                    )
+            except Exception as s3_err:
+                print(f"[Local Test] Error creating S3 bucket {bucket_name}: {str(s3_err)}")
+                
+        elif res_type == "aws_db_instance":
+            db_id = res_id or res_name
+            engine = attrs.get("engine", "postgres")
+            instance_class = attrs.get("instance_class", "db.t3.micro")
+            allocated_storage = attrs.get("allocated_storage", 20)
+            
+            sng_subnets = list(subnets.values())[:2]
+            try:
+                rds.create_db_subnet_group(
+                    DBSubnetGroupName='default',
+                    DBSubnetGroupDescription='Default DB Subnet Group',
+                    SubnetIds=sng_subnets
+                )
+            except rds.exceptions.DBSubnetGroupAlreadyExistsFault:
+                pass
+                
+            try:
+                rds.create_db_instance(
+                    DBInstanceIdentifier=db_id,
+                    DBInstanceClass=instance_class,
+                    Engine=engine,
+                    AllocatedStorage=allocated_storage,
+                    MasterUsername='admin',
+                    MasterUserPassword='TempPassword123!',
+                    DBSubnetGroupName='default'
+                )
+            except Exception as rds_err:
+                print(f"[Local Test] Error creating DB instance {db_id}: {str(rds_err)}")
 
     print("[Local Test] Fetching data using your upgraded function...")
-    data = fetch_live_infrastructure(region_name='us-east-1')
-    # Add RDS instance to resources for expanded stress test if not already fetched
-    if not any(r.get("id") == "db-master" for r in data['resources']):
-        data['resources'].append({
-            "id": "db-master",
-            "instance_class": "db.t3.micro",
-            "engine": "postgres",
-            "allocated_storage": 20,
-            "type": "aws_db_instance",
-            "db_subnet_group_name": "default",
-            "subnet_ids": [
-                subnet_private_1a['Subnet']['SubnetId'],
-                subnet_private_1b['Subnet']['SubnetId']
-            ]
-        })
+    data = fetch_live_infrastructure(region_name=region)
     print(json.dumps(data, indent=4))
     return data
 
