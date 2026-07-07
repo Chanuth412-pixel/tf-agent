@@ -495,7 +495,7 @@ def compile_infrastructure_graph(raw_data, mode):
                 edges.append({
                     "source": node_id,
                     "target": f"aws_vpc.{vpc_ref}",
-                    "relation": "contained_in"
+                    "relation": "isolated_by" if res_type == "aws_security_group" else "contained_in"
                 })
 
             # Subnet deployed relationship
@@ -504,7 +504,7 @@ def compile_infrastructure_graph(raw_data, mode):
                 edges.append({
                     "source": node_id,
                     "target": f"aws_subnet.{subnet_ref}",
-                    "relation": "contained_in" if res_type == "aws_instance" else "associated_with"
+                    "relation": "deployed_in" if res_type == "aws_instance" else "associated_with"
                 })
 
             # Security group relationship (e.g. EC2 instance SecurityGroups)
@@ -519,7 +519,7 @@ def compile_infrastructure_graph(raw_data, mode):
                     edges.append({
                         "source": node_id,
                         "target": f"aws_security_group.{sg_id}",
-                        "relation": "associated_with"
+                        "relation": "uses"
                     })
 
             # Launch template relationship
