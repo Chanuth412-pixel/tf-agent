@@ -61,19 +61,40 @@ def fetch_live_infrastructure(region_name=None):
         # --- NETWORK RESOURCES ---
         vpcs_response = ec2.describe_vpcs()
         vpcs = vpcs_response.get('Vpcs', [])
+        
+        default_vpc_id = None
+        # Find default VPC ID to skip its subnets
+        for v in vpcs:
+            if v.get('IsDefault', False) or v.get('CidrBlock') == '172.31.0.0/16':
+                default_vpc_id = v['VpcId']
+                break
+                
+        # Select the active VPC (prioritizing non-default custom VPC)
+        selected_vpc = None
         if vpcs:
-            vpc_id = vpcs[0]['VpcId']
-            # Put the VPC in resources
-            resources.append({
-                "type": "aws_vpc",
-                "id": vpc_id,
-                "cidr_block": vpcs[0]['CidrBlock'],
-                "tags": get_tags_dict(vpcs[0].get('Tags', []))
-            })
+            non_default_vpcs = [v for v in vpcs if v['VpcId'] != default_vpc_id]
+            selected_vpc = non_default_vpcs[0] if non_default_vpcs else vpcs[0]
+            vpc_id = selected_vpc['VpcId']
             
-        subnets_filter = [{'Name': 'vpc-id', 'Values': [vpc_id]}] if vpc_id else []
-        subnets_resp = ec2.describe_subnets(Filters=subnets_filter)
+            # Only append to resources if it's not the default ghost network
+            if vpc_id != default_vpc_id:
+                resources.append({
+                    "type": "aws_vpc",
+                    "id": vpc_id,
+                    "cidr_block": selected_vpc['CidrBlock'],
+                    "tags": get_tags_dict(selected_vpc.get('Tags', []))
+                })
+        else:
+            vpc_id = None
+            
+        subnets_resp = ec2.describe_subnets()
         for sn in subnets_resp.get('Subnets', []):
+            # Strictly skip subnets attached to the default VPC
+            if sn['VpcId'] == default_vpc_id:
+                continue
+            # If we have a selected VPC and this subnet belongs to a different non-default VPC, skip it too
+            if vpc_id and sn['VpcId'] != vpc_id:
+                continue
             resources.append({
                 "type": "aws_subnet",
                 "id": sn['SubnetId'],
