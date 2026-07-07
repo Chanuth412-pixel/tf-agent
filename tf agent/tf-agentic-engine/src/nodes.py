@@ -467,6 +467,13 @@ def generate_data_node(state: GraphState) -> dict:
     CONSTRAINT 1: You are strictly responsible for Compute and Data resources. NEVER generate `import` or `resource` blocks for VPCs, Subnets, or IAM roles. If your resources require an IAM role or VPC reference, use the raw ARN/ID string provided in the JSON, or reference the outputs from the injected {security_context} and {network_context}.
 
     CONSTRAINT 2: Terraform resource labels must start with a letter. If the extracted AWS resource ID begins with a number (e.g., a UUID like 3a327099...), you MUST prepend a string like `mapping_` or `res_` to the local resource name (e.g., `resource "aws_lambda_event_source_mapping" "mapping_3a327099..."`).
+
+    CONSTRAINT 3 (DynamoDB): When generating an `aws_dynamodb_table` resource, DO NOT use the `attribute_definitions` list from the JSON input. You must convert it into individual Terraform `attribute {}` blocks. 
+    For example, instead of `attribute_definitions = [{name = "id", type = "S"}]`, you MUST write:
+    attribute {
+      name = "id"
+      type = "S"
+    }
     """
     prompt = mode_instructions + "\n" + compute_data_constraints + "\n" + DATA_PROMPT
 
