@@ -184,13 +184,27 @@ def generate_network_node(state: GraphState) -> dict:
     if val_errors:
         prompt = val_errors + "\n" + prompt
 
-    hcl = call_cloud_llm(
-        prompt,
-        {
-            "aws_input_data": aws_input,
-            "user_prompt": prompt_user,
-        },
-    )
+    resources = aws_input.get("resources", [])
+    if not resources:
+        hcl = "# No network resources required."
+    else:
+        hcl_blocks = []
+        for resource in resources:
+            single_input = {
+                "region": aws_input.get("region"),
+                "vpc_id": aws_input.get("vpc_id"),
+                "resources": [resource]
+            }
+            block = call_cloud_llm(
+                prompt,
+                {
+                    "aws_input_data": single_input,
+                    "user_prompt": prompt_user,
+                },
+            )
+            hcl_blocks.append(block)
+        hcl = "\n\n".join(hcl_blocks)
+        
     parse_and_write_files(hcl, phase_filename="network.tf")
     return {"network_hcl": hcl, "current_phase": "network"}
 
@@ -298,17 +312,31 @@ def generate_security_node(state: GraphState) -> dict:
     if val_errors:
         prompt = val_errors + "\n" + prompt
 
-    hcl = call_cloud_llm(
-        prompt,
-        {
-            "aws_input_data": aws_input,
-            "user_prompt": prompt_user,
-            "network_context": (
-                "An existing VPC named 'aws_vpc.main' and subnets 'aws_subnet.public_1' "
-                "and 'aws_subnet.private_1' are already declared. DO NOT rewrite them."
-            ),
-        },
-    )
+    resources = aws_input.get("resources", [])
+    if not resources:
+        hcl = "# No security resources required."
+    else:
+        hcl_blocks = []
+        for resource in resources:
+            single_input = {
+                "region": aws_input.get("region"),
+                "vpc_id": aws_input.get("vpc_id"),
+                "resources": [resource]
+            }
+            block = call_cloud_llm(
+                prompt,
+                {
+                    "aws_input_data": single_input,
+                    "user_prompt": prompt_user,
+                    "network_context": (
+                        "An existing VPC named 'aws_vpc.main' and subnets 'aws_subnet.public_1' "
+                        "and 'aws_subnet.private_1' are already declared. DO NOT rewrite them."
+                    ),
+                },
+            )
+            hcl_blocks.append(block)
+        hcl = "\n\n".join(hcl_blocks)
+        
     parse_and_write_files(hcl, phase_filename="security.tf")
     return {"security_hcl": hcl, "current_phase": "security"}
 
@@ -461,22 +489,36 @@ def generate_compute_node(state: GraphState) -> dict:
     if val_errors:
         prompt = val_errors + "\n" + prompt
 
-    hcl = call_cloud_llm(
-        prompt,
-        {
-            "aws_input_data": aws_input,
-            "user_prompt": prompt_user,
-            "network_context": (
-                "Available infrastructure references: vpc_id = aws_vpc.main.id, "
-                "public_subnet_id = aws_subnet.public_1.id, private_subnet_id = aws_subnet.private_1.id. "
-                "DO NOT declare these resource blocks again."
-            ),
-            "security_context": (
-                "Available security references: security_group_id = aws_security_group.vpc_sg.id. "
-                "DO NOT declare this block again."
-            ),
-        },
-    )
+    resources = aws_input.get("resources", [])
+    if not resources:
+        hcl = "# No compute resources required."
+    else:
+        hcl_blocks = []
+        for resource in resources:
+            single_input = {
+                "region": aws_input.get("region"),
+                "vpc_id": aws_input.get("vpc_id"),
+                "resources": [resource]
+            }
+            block = call_cloud_llm(
+                prompt,
+                {
+                    "aws_input_data": single_input,
+                    "user_prompt": prompt_user,
+                    "network_context": (
+                        "Available infrastructure references: vpc_id = aws_vpc.main.id, "
+                        "public_subnet_id = aws_subnet.public_1.id, private_subnet_id = aws_subnet.private_1.id. "
+                        "DO NOT declare these resource blocks again."
+                    ),
+                    "security_context": (
+                        "Available security references: security_group_id = aws_security_group.vpc_sg.id. "
+                        "DO NOT declare this block again."
+                    ),
+                },
+            )
+            hcl_blocks.append(block)
+        hcl = "\n\n".join(hcl_blocks)
+        
     parse_and_write_files(hcl, phase_filename="compute.tf")
     return {"compute_hcl": hcl, "current_phase": "compute"}
 
@@ -595,22 +637,36 @@ def generate_data_node(state: GraphState) -> dict:
     if val_errors:
         prompt = val_errors + "\n" + prompt
 
-    hcl = call_cloud_llm(
-        prompt,
-        {
-            "aws_input_data": aws_input,
-            "user_prompt": prompt_user,
-            "network_context": (
-                "Available infrastructure references: vpc_id = aws_vpc.main.id, "
-                "public_subnet_id = aws_subnet.public_1.id, private_subnet_id = aws_subnet.private_1.id. "
-                "DO NOT declare these resource blocks again."
-            ),
-            "security_context": (
-                "Available security references: security_group_id = aws_security_group.vpc_sg.id. "
-                "DO NOT declare this block again."
-            ),
-        },
-    )
+    resources = aws_input.get("resources", [])
+    if not resources:
+        hcl = "# No data resources required."
+    else:
+        hcl_blocks = []
+        for resource in resources:
+            single_input = {
+                "region": aws_input.get("region"),
+                "vpc_id": aws_input.get("vpc_id"),
+                "resources": [resource]
+            }
+            block = call_cloud_llm(
+                prompt,
+                {
+                    "aws_input_data": single_input,
+                    "user_prompt": prompt_user,
+                    "network_context": (
+                        "Available infrastructure references: vpc_id = aws_vpc.main.id, "
+                        "public_subnet_id = aws_subnet.public_1.id, private_subnet_id = aws_subnet.private_1.id. "
+                        "DO NOT declare these resource blocks again."
+                    ),
+                    "security_context": (
+                        "Available security references: security_group_id = aws_security_group.vpc_sg.id. "
+                        "DO NOT declare this block again."
+                    ),
+                },
+            )
+            hcl_blocks.append(block)
+        hcl = "\n\n".join(hcl_blocks)
+        
     parse_and_write_files(hcl, phase_filename="data.tf")
     return {"data_hcl": hcl, "current_phase": "data"}
 
