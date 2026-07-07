@@ -108,7 +108,10 @@ def generate_network_node(state: GraphState) -> dict:
                 If the aws_input_data contains no network resources, output exactly: # No network resources required.
                 """
 
-    prompt = mode_instructions + "\n" + NETWORK_PROMPT
+    network_constraint = """
+    CONSTRAINT: You are strictly responsible for Networking. Only generate `resource` and `import` blocks for VPCs, Subnets, NAT Gateways, and Internet Gateways.
+    """
+    prompt = mode_instructions + "\n" + network_constraint + "\n" + NETWORK_PROMPT
 
     if mode == "new":
         prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. NO VARIABLES ALLOWED: You are strictly FORBIDDEN from using ANY var.* references. You MUST hardcode ALL values. Hardcode cidr_blocks (e.g., '10.0.0.0/16') and tags (e.g., Environment = 'production').\n2. DEPENDENCIES & NAMING: You must strictly align resource names across files. The Network node MUST declare the VPC as 'resource \"aws_vpc\" \"main\"'. The Security node MUST declare the security group as 'resource \"aws_security_group\" \"main\"'. All cross-references must use 'aws_vpc.main.id' and 'aws_security_group.main.id'.\n3. BLOCK SYNTAX: Never use equals signs for repeatable configuration sub-blocks. Use 'attribute { ... }' instead of 'attribute = [ ... ]', and 'ingress { ... }' instead of 'ingress = [ ... ]'.\n4. DYNAMODB SYNTAX: If you generate an aws_dynamodb_table, you must define the 'hash_key'. You MUST set 'billing_mode = \"PAY_PER_REQUEST\"'. Do NOT specify 'read_capacity_units' or 'write_capacity_units'.\n5. AWS_EIP SYNTAX: For aws_eip, you MUST ONLY use 'domain = \"vpc\"'. Completely remove 'vpc = true'."
@@ -220,7 +223,10 @@ def generate_security_node(state: GraphState) -> dict:
                 If the aws_input_data contains no security resources, output exactly: # No security resources required.
                 """
 
-    prompt = mode_instructions + "\n" + SECURITY_PROMPT
+    security_constraint = """
+    CONSTRAINT: You are strictly responsible for Security. Only generate `resource` and `import` blocks for IAM roles, IAM policies, and Security Groups. NEVER generate `import` or `resource` blocks for VPCs or Subnets, even if they appear in your input JSON.
+    """
+    prompt = mode_instructions + "\n" + security_constraint + "\n" + SECURITY_PROMPT
 
     if mode == "new":
         prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. NO VARIABLES ALLOWED: You are strictly FORBIDDEN from using ANY var.* references. You MUST hardcode ALL values. Hardcode cidr_blocks (e.g., '10.0.0.0/16') and tags (e.g., Environment = 'production').\n2. DEPENDENCIES & NAMING: You must strictly align resource names across files. The Network node MUST declare the VPC as 'resource \"aws_vpc\" \"main\"'. The Security node MUST declare the security group as 'resource \"aws_security_group\" \"main\"'. All cross-references must use 'aws_vpc.main.id' and 'aws_security_group.main.id'.\n3. BLOCK SYNTAX: Never use equals signs for repeatable configuration sub-blocks. Use 'attribute { ... }' instead of 'attribute = [ ... ]', and 'ingress { ... }' instead of 'ingress = [ ... ]'.\n4. DYNAMODB SYNTAX: If you generate an aws_dynamodb_table, you must define the 'hash_key'. If you specify 'read_capacity_units' and 'write_capacity_units', you MUST explicitly set 'billing_mode = \"PROVISIONED\"'.\n5. AWS_EIP SYNTAX: For aws_eip, you MUST ONLY use 'domain = \"vpc\"'. Completely remove 'vpc = true'."
@@ -333,7 +339,12 @@ def generate_compute_node(state: GraphState) -> dict:
                 If the aws_input_data contains no compute resources, output exactly: # No compute resources required.
                 """
 
-    prompt = mode_instructions + "\n" + COMPUTE_PROMPT
+    compute_data_constraints = """
+    CONSTRAINT 1: You are strictly responsible for Compute and Data resources. NEVER generate `import` or `resource` blocks for VPCs, Subnets, or IAM roles. If your resources require an IAM role or VPC reference, use the raw ARN/ID string provided in the JSON, or reference the outputs from the injected {security_context} and {network_context}.
+
+    CONSTRAINT 2: Terraform resource labels must start with a letter. If the extracted AWS resource ID begins with a number (e.g., a UUID like 3a327099...), you MUST prepend a string like `mapping_` or `res_` to the local resource name (e.g., `resource "aws_lambda_event_source_mapping" "mapping_3a327099..."`).
+    """
+    prompt = mode_instructions + "\n" + compute_data_constraints + "\n" + COMPUTE_PROMPT
 
     if mode == "new":
         prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. NO VARIABLES ALLOWED: You are strictly FORBIDDEN from using ANY var.* references. You MUST hardcode ALL values. Hardcode cidr_blocks (e.g., '10.0.0.0/16') and tags (e.g., Environment = 'production').\n2. DEPENDENCIES & NAMING: You must strictly align resource names across files. The Network node MUST declare the VPC as 'resource \"aws_vpc\" \"main\"'. The Security node MUST declare the security group as 'resource \"aws_security_group\" \"main\"'. All cross-references must use 'aws_vpc.main.id' and 'aws_security_group.main.id'.\n3. BLOCK SYNTAX: Never use equals signs for repeatable configuration sub-blocks. Use 'attribute { ... }' instead of 'attribute = [ ... ]', and 'ingress { ... }' instead of 'ingress = [ ... ]'.\n4. DYNAMODB SYNTAX: If you generate an aws_dynamodb_table, you must define the 'hash_key'. You MUST set 'billing_mode = \"PAY_PER_REQUEST\"'. Do NOT specify 'read_capacity_units' or 'write_capacity_units'.\n5. AWS_EIP SYNTAX: For aws_eip, you MUST ONLY use 'domain = \"vpc\"'. Completely remove 'vpc = true'."
@@ -452,7 +463,12 @@ def generate_data_node(state: GraphState) -> dict:
                 If the aws_input_data contains no data resources, output exactly: # No data resources required.
                 """
 
-    prompt = mode_instructions + "\n" + DATA_PROMPT
+    compute_data_constraints = """
+    CONSTRAINT 1: You are strictly responsible for Compute and Data resources. NEVER generate `import` or `resource` blocks for VPCs, Subnets, or IAM roles. If your resources require an IAM role or VPC reference, use the raw ARN/ID string provided in the JSON, or reference the outputs from the injected {security_context} and {network_context}.
+
+    CONSTRAINT 2: Terraform resource labels must start with a letter. If the extracted AWS resource ID begins with a number (e.g., a UUID like 3a327099...), you MUST prepend a string like `mapping_` or `res_` to the local resource name (e.g., `resource "aws_lambda_event_source_mapping" "mapping_3a327099..."`).
+    """
+    prompt = mode_instructions + "\n" + compute_data_constraints + "\n" + DATA_PROMPT
 
     if mode == "new":
         prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. NO VARIABLES ALLOWED: You are strictly FORBIDDEN from using ANY var.* references. You MUST hardcode ALL values. Hardcode cidr_blocks (e.g., '10.0.0.0/16') and tags (e.g., Environment = 'production').\n2. DEPENDENCIES & NAMING: You must strictly align resource names across files. The Network node MUST declare the VPC as 'resource \"aws_vpc\" \"main\"'. The Security node MUST declare the security group as 'resource \"aws_security_group\" \"main\"'. All cross-references must use 'aws_vpc.main.id' and 'aws_security_group.main.id'.\n3. BLOCK SYNTAX: Never use equals signs for repeatable configuration sub-blocks. Use 'attribute { ... }' instead of 'attribute = [ ... ]', and 'ingress { ... }' instead of 'ingress = [ ... ]'.\n4. DYNAMODB SYNTAX: If you generate an aws_dynamodb_table, you must define the 'hash_key'. You MUST set 'billing_mode = \"PAY_PER_REQUEST\"'. Do NOT specify 'read_capacity_units' or 'write_capacity_units'.\n5. AWS_EIP SYNTAX: For aws_eip, you MUST ONLY use 'domain = \"vpc\"'. Completely remove 'vpc = true'.\n6. RDS SUBNETS: Never place subnet_ids directly inside an aws_db_instance. When network subnets are provided for a database, always generate a separate aws_db_subnet_group resource and link it to the aws_db_instance using the db_subnet_group_name attribute. Never use the name \"default\" for an aws_db_subnet_group. Always generate a descriptive name based on the environment or database identifier (e.g., \"main-db-subnet-group\"). When creating an aws_db_subnet_group, you must only populate the subnet_ids array using the exact resource addresses/IDs of aws_subnet resources that already exist in the network state. Do not invent new subnet IDs."
