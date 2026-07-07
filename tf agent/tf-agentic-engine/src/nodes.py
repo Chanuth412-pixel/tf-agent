@@ -344,6 +344,9 @@ def generate_compute_node(state: GraphState) -> dict:
     CONSTRAINT 1: You are strictly responsible for Compute and Data resources. NEVER generate `import` or `resource` blocks for VPCs, Subnets, or IAM roles. If your resources require an IAM role or VPC reference, use the raw ARN/ID string provided in the JSON, or reference the outputs from the injected {security_context} and {network_context}.
 
     CONSTRAINT 2: Terraform resource labels must start with a letter. If the extracted AWS resource ID begins with a number (e.g., a UUID like 3a327099...), you MUST prepend a string like `mapping_` or `res_` to the local resource name (e.g., `resource "aws_lambda_event_source_mapping" "mapping_3a327099..."`).
+
+    CONSTRAINT 4 (Naming): Always use underscores instead of hyphens for Terraform resource names. (e.g., use `aws_sqs_queue.task_queue`, NEVER `aws_sqs_queue.task-queue`).
+    CONSTRAINT 5 (Imports): In an `import` block, the `to` attribute must only contain the resource type and name. NEVER prepend it with `resource.`. (e.g., use `to = aws_sqs_queue.main`, NEVER `to = resource.aws_sqs_queue.main`).
     """
     prompt = mode_instructions + "\n" + compute_data_constraints + "\n" + COMPUTE_PROMPT
 
@@ -475,6 +478,9 @@ def generate_data_node(state: GraphState) -> dict:
       name = "id"
       type = "S"
     }
+
+    CONSTRAINT 4 (Naming): Always use underscores instead of hyphens for Terraform resource names. (e.g., use `aws_sqs_queue.task_queue`, NEVER `aws_sqs_queue.task-queue`).
+    CONSTRAINT 5 (Imports): In an `import` block, the `to` attribute must only contain the resource type and name. NEVER prepend it with `resource.`. (e.g., use `to = aws_sqs_queue.main`, NEVER `to = resource.aws_sqs_queue.main`).
     """
     prompt = mode_instructions + "\n" + compute_data_constraints + "\n" + DATA_PROMPT
 

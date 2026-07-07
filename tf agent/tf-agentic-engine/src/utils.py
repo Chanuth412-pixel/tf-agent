@@ -501,6 +501,34 @@ def post_process_hcl_compliance(workspace_dir: str) -> None:
         modified = False
         new_content = content
         
+        # Pre-cleanup: Fix "to = resource.aws_..." and replace hyphens in resource names/labels
+        original_content = new_content
+        # 1. Fix "to = resource.aws_..." in import blocks
+        new_content = re.sub(r'\bto\s*=\s*resource\.aws_', 'to = aws_', new_content)
+        
+        # 2. Find all resource names and replace hyphens with underscores
+        resource_pattern = r'\b(resource|data)\s+"([a-zA-Z0-9_]+)"\s+"([a-zA-Z0-9_-]+)"\s*\{'
+        resource_matches = re.findall(resource_pattern, new_content)
+        
+        import_pattern = r'\bto\s*=\s*([a-zA-Z0-9_]+)\.([a-zA-Z0-9_-]+)\b'
+        import_matches = re.findall(import_pattern, new_content)
+        
+        names_with_hyphens = set()
+        for _, _, res_name in resource_matches:
+            if "-" in res_name:
+                names_with_hyphens.add(res_name)
+        for _, res_name in import_matches:
+            if "-" in res_name:
+                names_with_hyphens.add(res_name)
+                
+        for name in names_with_hyphens:
+            clean_name = name.replace("-", "_")
+            new_content = new_content.replace(f'"{name}"', f'"{clean_name}"')
+            new_content = re.sub(r'\b' + re.escape(name) + r'\b', clean_name, new_content)
+            
+        if new_content != original_content:
+            modified = True
+
         # 1. Fix aws_autoscaling_group "tags = ..." or "tags_all = ..."
         asg_matches = list(re.finditer(r'resource\s+"aws_autoscaling_group"\s+"([^"]+)"\s*\{', new_content))
         for match in reversed(asg_matches):
