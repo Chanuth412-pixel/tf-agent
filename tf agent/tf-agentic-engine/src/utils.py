@@ -1044,21 +1044,61 @@ def generate_png_graph(state: dict, workspace_dir: str = "terraform_workspace") 
     nodes = infra_graph.get("nodes", {})
     edges = infra_graph.get("edges", [])
 
-    dot_lines = ["digraph G {", '  node [style="filled", shape="box", fontname="Arial"];']
+    # Group nodes by domain
+    domains = {
+        "Network": [],
+        "Security": [],
+        "Compute": [],
+        "Data & Serverless": []
+    }
 
-    # Add nodes with colors
     for node_key, node_data in nodes.items():
-        name = node_data.get("name") or node_key
-        # Pick background color based on type
-        color = "lightblue"
-        if "vpc" in node_key:
-            color = "lightgreen"
-        elif "subnet" in node_key:
-            color = "bisque"
-        elif "security" in node_key:
-            color = "lightpink"
+        res_type = node_data.get("type", "")
+        if res_type in ["aws_vpc", "aws_subnet", "aws_internet_gateway", "aws_nat_gateway"]:
+            domains["Network"].append((node_key, node_data))
+        elif res_type in ["aws_security_group", "aws_iam_role", "aws_iam_policy"]:
+            domains["Security"].append((node_key, node_data))
+        elif res_type in ["aws_instance", "aws_eks_cluster", "aws_eks_node_group", "aws_autoscaling_group", "aws_launch_template"]:
+            domains["Compute"].append((node_key, node_data))
+        else:
+            domains["Data & Serverless"].append((node_key, node_data))
+
+    dot_lines = [
+        "digraph G {",
+        "  rankdir=TB;",
+        '  node [style="filled", shape="box", fontname="Arial"];'
+    ]
+
+    domain_styles = {
+        "Network": 'style=filled; color="#82b366"; fillcolor="#f5fbf0"; label="Network";',
+        "Security": 'style=filled; color="#b85450"; fillcolor="#fdf6f6"; label="Security";',
+        "Compute": 'style=filled; color="#6c8ebf"; fillcolor="#f0f4f9"; label="Compute";',
+        "Data & Serverless": 'style=filled; color="#d79b00"; fillcolor="#fffaf0"; label="Data & Serverless";'
+    }
+
+    cluster_idx = 0
+    for domain_name, res_list in domains.items():
+        if not res_list:
+            continue
             
-        dot_lines.append(f'  "{node_key}" [label="{name}", fillcolor="{color}"];')
+        dot_lines.append(f'  subgraph cluster_{cluster_idx} {{')
+        dot_lines.append(f'    {domain_styles[domain_name]}')
+        
+        for node_key, node_data in res_list:
+            name = node_data.get("name") or node_key
+            if domain_name == "Network":
+                color = "#ffe6cc"
+            elif domain_name == "Security":
+                color = "#f8cecc"
+            elif domain_name == "Compute":
+                color = "#dae8fc"
+            else:
+                color = "#fff2cc"
+                
+            dot_lines.append(f'    "{node_key}" [label="{name}\\n({node_data.get("type", "")})", fillcolor="{color}"];')
+            
+        dot_lines.append("  }")
+        cluster_idx += 1
 
     # Add edges
     for edge in edges:
