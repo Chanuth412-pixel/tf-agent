@@ -111,6 +111,11 @@ def generate_network_node(state: GraphState) -> dict:
 
     network_constraint = """
     CONSTRAINT: You are strictly responsible for Networking. Only generate `resource` and `import` blocks for VPCs, Subnets, NAT Gateways, and Internet Gateways.
+    
+    CRITICAL ARCHITECTURAL CONSTRAINT:
+    You must process EVERY resource provided in the routed payload. 
+    If the payload contains multiple independent VPCs or environments (e.g., prod and staging), you must generate separate infrastructure trees for EACH environment. 
+    Do NOT drop environments. Do NOT synthesize unrequested auxiliary resources like extra subnets or internet gateways unless they are explicitly present in the input JSON data.
     """
     prompt = mode_instructions + "\n" + network_constraint + "\n" + NETWORK_PROMPT
 
@@ -347,6 +352,11 @@ def generate_compute_node(state: GraphState) -> dict:
 
     CONSTRAINT 4 (Naming): Always use underscores instead of hyphens for Terraform resource names. (e.g., use `aws_sqs_queue.task_queue`, NEVER `aws_sqs_queue.task-queue`).
     CONSTRAINT 5 (Imports): In an `import` block, the `to` attribute must only contain the resource type and name. NEVER prepend it with `resource.`. (e.g., use `to = aws_sqs_queue.main`, NEVER `to = resource.aws_sqs_queue.main`).
+    
+    CRITICAL ARCHITECTURAL CONSTRAINT:
+    You must process EVERY resource provided in the routed payload. 
+    If the payload contains multiple independent VPCs or environments (e.g., prod and staging), you must generate separate infrastructure trees for EACH environment. 
+    Do NOT drop environments. Do NOT synthesize unrequested auxiliary resources like extra subnets or internet gateways unless they are explicitly present in the input JSON data.
     """
     prompt = mode_instructions + "\n" + compute_data_constraints + "\n" + COMPUTE_PROMPT
 
