@@ -1205,3 +1205,35 @@ def scrub_deprecated_s3_syntax(workspace_dir: str = "terraform_workspace"):
         with open(filepath, "w", encoding="utf-8") as f:
             f.writelines(new_lines)
 
+
+def filter_aws_input_data(aws_input_data: dict, node_type: str) -> dict:
+    """Filters the telemetry payload so nodes only receive their respective domain resources."""
+    if not aws_input_data or not isinstance(aws_input_data, dict):
+        return {}
+        
+    filtered = {
+        "region": aws_input_data.get("region", "us-east-1"),
+        "vpc_id": aws_input_data.get("vpc_id"),
+        "resources": []
+    }
+    
+    if node_type == "network":
+        allowed = ["aws_vpc", "aws_subnet", "aws_internet_gateway", "aws_nat_gateway"]
+    elif node_type == "security":
+        allowed = ["aws_iam_role", "aws_iam_policy", "aws_security_group"]
+    elif node_type == "compute":
+        allowed = ["aws_instance", "aws_eks_cluster", "aws_eks_node_group", "aws_autoscaling_group", "aws_launch_template"]
+    elif node_type == "data":
+        allowed = [
+            "aws_s3_bucket", "aws_db_instance", "aws_dynamodb_table",
+            "aws_sqs_queue", "aws_lambda_function", "aws_lambda_event_source_mapping"
+        ]
+    else:
+        allowed = []
+        
+    filtered["resources"] = [
+        r for r in aws_input_data.get("resources", [])
+        if r.get("type") in allowed
+    ]
+    return filtered
+

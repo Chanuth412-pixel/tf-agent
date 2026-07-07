@@ -10,6 +10,7 @@ from src.utils import (
     SECURITY_PROMPT,
     COMPUTE_PROMPT,
     DATA_PROMPT,
+    filter_aws_input_data,
 )
 
 
@@ -39,9 +40,9 @@ def routing_decision_router(state: GraphState) -> str:
 def generate_network_node(state: GraphState) -> dict:
     print("[Node] Generating Network Configuration...")
     mode = state.get("deployment_mode")
+    aws_input = filter_aws_input_data(state.get("aws_input_data", {}), "network")
 
     if mode == "import":
-        aws_input = state.get("aws_input_data", {})
         vpc_id = aws_input.get("vpc_id")
         resources = aws_input.get("resources", [])
         has_network = bool(vpc_id) or any(r.get("type") in ["aws_subnet", "aws_vpc"] for r in resources)
@@ -149,7 +150,7 @@ def generate_network_node(state: GraphState) -> dict:
     hcl = call_cloud_llm(
         prompt,
         {
-            "aws_input_data": state.get("aws_input_data"),
+            "aws_input_data": aws_input,
             "user_prompt": prompt_user,
         },
     )
@@ -160,9 +161,9 @@ def generate_network_node(state: GraphState) -> dict:
 def generate_security_node(state: GraphState) -> dict:
     print("[Node] Generating Security Configuration...")
     mode = state.get("deployment_mode")
+    aws_input = filter_aws_input_data(state.get("aws_input_data", {}), "security")
 
     if mode == "import":
-        aws_input = state.get("aws_input_data", {})
         resources = aws_input.get("resources", [])
         has_security = any(r.get("type") in ["aws_security_group", "aws_iam_role"] for r in resources)
         if not has_security:
@@ -263,7 +264,7 @@ def generate_security_node(state: GraphState) -> dict:
     hcl = call_cloud_llm(
         prompt,
         {
-            "aws_input_data": state.get("aws_input_data"),
+            "aws_input_data": aws_input,
             "user_prompt": prompt_user,
             "network_context": (
                 "An existing VPC named 'aws_vpc.main' and subnets 'aws_subnet.public_1' "
@@ -278,9 +279,9 @@ def generate_security_node(state: GraphState) -> dict:
 def generate_compute_node(state: GraphState) -> dict:
     print("[Node] Generating Compute Configuration...")
     mode = state.get("deployment_mode")
+    aws_input = filter_aws_input_data(state.get("aws_input_data", {}), "compute")
 
     if mode == "import":
-        aws_input = state.get("aws_input_data", {})
         resources = aws_input.get("resources", [])
         has_compute = any(r.get("type") in ["aws_instance", "aws_autoscaling_group", "aws_launch_template"] for r in resources)
         if not has_compute:
@@ -382,7 +383,7 @@ def generate_compute_node(state: GraphState) -> dict:
     hcl = call_cloud_llm(
         prompt,
         {
-            "aws_input_data": state.get("aws_input_data"),
+            "aws_input_data": aws_input,
             "user_prompt": prompt_user,
             "network_context": (
                 "Available infrastructure references: vpc_id = aws_vpc.main.id, "
@@ -402,11 +403,11 @@ def generate_compute_node(state: GraphState) -> dict:
 def generate_data_node(state: GraphState) -> dict:
     print("[Node] Generating Data Configuration...")
     mode = state.get("deployment_mode")
+    aws_input = filter_aws_input_data(state.get("aws_input_data", {}), "data")
 
     if mode == "import":
-        aws_input = state.get("aws_input_data", {})
         resources = aws_input.get("resources", [])
-        has_data = any(r.get("type") in ["aws_s3_bucket", "aws_db_instance", "aws_dynamodb_table"] for r in resources)
+        has_data = any(r.get("type") in ["aws_s3_bucket", "aws_db_instance", "aws_dynamodb_table", "aws_sqs_queue", "aws_lambda_function", "aws_lambda_event_source_mapping"] for r in resources)
         if not has_data:
             print("[Node] No data resources found in AWS input data. Bypassing LLM.")
             hcl = "# No data resources required."
@@ -513,7 +514,7 @@ def generate_data_node(state: GraphState) -> dict:
     hcl = call_cloud_llm(
         prompt,
         {
-            "aws_input_data": state.get("aws_input_data"),
+            "aws_input_data": aws_input,
             "user_prompt": prompt_user,
             "network_context": (
                 "Available infrastructure references: vpc_id = aws_vpc.main.id, "
