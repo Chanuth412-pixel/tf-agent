@@ -193,7 +193,8 @@ def generate_network_node(state: GraphState) -> dict:
         for resource in resources:
             r_id = resource.get('id') or resource.get('name') or "unnamed"
             r_type = resource.get('type') or "unknown"
-            print(f"[DEBUG] Sending resource to LLM: {r_id} | Type: {r_type}")
+            
+            print(f"\n[DEBUG] 🚀 Sending to LLM -> Type: {r_type} | ID: {r_id}")
             
             single_input = {
                 "region": aws_input.get("region"),
@@ -228,7 +229,10 @@ def generate_network_node(state: GraphState) -> dict:
                     "user_prompt": prompt_user,
                 },
             )
-            print(f"[DEBUG] Received HCL block for {r_id}: {len(block)} characters")
+            print(f"[DEBUG] 📥 Received from LLM -> {len(block)} characters")
+            if len(block) < 20:
+                print(f"[DEBUG] ⚠️ WARNING: Suspiciously short block: {block}")
+                
             hcl_blocks.append(block)
         hcl = "\n\n".join(hcl_blocks)
         
@@ -559,7 +563,8 @@ def generate_compute_node(state: GraphState) -> dict:
         for resource in resources:
             r_id = resource.get('id') or resource.get('name') or "unnamed"
             r_type = resource.get('type') or "unknown"
-            print(f"[DEBUG] Sending resource to LLM: {r_id} | Type: {r_type}")
+            
+            print(f"\n[DEBUG] 🚀 Sending to LLM -> Type: {r_type} | ID: {r_id}")
             
             single_input = {
                 "region": aws_input.get("region"),
@@ -603,7 +608,10 @@ def generate_compute_node(state: GraphState) -> dict:
                     ),
                 },
             )
-            print(f"[DEBUG] Received HCL block for {r_id}: {len(block)} characters")
+            print(f"[DEBUG] 📥 Received from LLM -> {len(block)} characters")
+            if len(block) < 20:
+                print(f"[DEBUG] ⚠️ WARNING: Suspiciously short block: {block}")
+                
             hcl_blocks.append(block)
         hcl = "\n\n".join(hcl_blocks)
         
