@@ -319,6 +319,19 @@ def generate_security_node(state: GraphState) -> dict:
         to_port   = 0
     - Never emit an empty or partially populated ingress/egress block.
     - Ensure all variable assignments match valid structural integers or strings.
+
+    CRITICAL IAM EXCEPTION:
+    If the resource type is 'aws_iam_role', Terraform strictly REQUIRES an 'assume_role_policy'.
+    If the JSON does not contain one, you MUST inject this exact default policy into the block:
+    
+    assume_role_policy = jsonencode({
+      Version = "2012-10-17"
+      Statement = [{
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = { Service = "ec2.amazonaws.com" }
+      }]
+    })
     """
     prompt = mode_instructions + "\n" + security_constraint + "\n" + SECURITY_PROMPT
 
