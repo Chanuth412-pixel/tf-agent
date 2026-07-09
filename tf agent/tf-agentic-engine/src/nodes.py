@@ -12,6 +12,7 @@ from src.utils import (
     DATA_PROMPT,
     filter_aws_input_data,
     COMPLIANCE_RULES,
+    clean_hcl_output,
 )
 
 
@@ -229,6 +230,7 @@ def generate_network_node(state: GraphState) -> dict:
                     "user_prompt": prompt_user,
                 },
             )
+            block = clean_hcl_output(block)
             print(f"[DEBUG] 📥 Received from LLM -> {len(block)} characters")
             if len(block) < 20:
                 print(f"[DEBUG] ⚠️ WARNING: Suspiciously short block: {block}")
@@ -399,6 +401,7 @@ def generate_security_node(state: GraphState) -> dict:
                     ),
                 },
             )
+            block = clean_hcl_output(block)
             print(f"[DEBUG] Received HCL block for {r_id}: {len(block)} characters")
             hcl_blocks.append(block)
         hcl = "\n\n".join(hcl_blocks)
@@ -608,6 +611,7 @@ def generate_compute_node(state: GraphState) -> dict:
                     ),
                 },
             )
+            block = clean_hcl_output(block)
             print(f"[DEBUG] 📥 Received from LLM -> {len(block)} characters")
             if len(block) < 20:
                 print(f"[DEBUG] ⚠️ WARNING: Suspiciously short block: {block}")
@@ -785,6 +789,7 @@ def generate_data_node(state: GraphState) -> dict:
                     ),
                 },
             )
+            block = clean_hcl_output(block)
             print(f"[DEBUG] Received HCL block for {r_id}: {len(block)} characters")
             hcl_blocks.append(block)
         hcl = "\n\n".join(hcl_blocks)
