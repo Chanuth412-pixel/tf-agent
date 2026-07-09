@@ -480,6 +480,54 @@ def parse_and_write_files(data, phase_filename=None):
     return True
 
 
+def fix_malformed_security_groups(hcl_content: str) -> str:
+    """
+    Scans generated HCL and ensures that any ingress or egress block 
+    containing empty parameters is either populated with default fallback 
+    values or cleaned to avoid compiler crashes.
+    """
+    # Pattern to catch empty or broken blocks missing required parameters
+    # This acts as an immediate firewall for incomplete structural components
+    if "ingress {" in hcl_content or "egress {" in hcl_content:
+        # Check if an ingress block is missing explicit port definitions
+        lines = hcl_content.splitlines()
+        modified_lines = []
+        inside_sg = False
+        inside_rule = False
+        rule_has_ports = False
+        rule_type = None
+
+        for line in lines:
+            if "resource \"aws_security_group\"" in line:
+                inside_sg = True
+            
+            if inside_sg and ("ingress {" in line or "egress {" in line):
+                inside_rule = True
+                rule_type = "ingress" if "ingress" in line else "egress"
+                rule_has_ports = False
+                modified_lines.append(line)
+                continue
+                
+            if inside_rule:
+                if "from_port" in line or "to_port" in line:
+                    rule_has_ports = True
+                if line.strip() == "}":
+                    inside_rule = False
+                    if not rule_has_ports:
+                        # Inject fallback parameters for wide-open definitions
+                        modified_lines.append('    from_port   = 0')
+                        modified_lines.append('    to_port     = 0')
+                        modified_lines.append('    protocol    = "-1"')
+                        modified_lines.append('    cidr_blocks = ["0.0.0.0/0"]')
+                    modified_lines.append(line)
+                    continue
+                    
+            modified_lines.append(line)
+        return "\n".join(modified_lines)
+        
+    return hcl_content
+
+
 def post_process_hcl_compliance(workspace_dir: str) -> None:
     """
     Applies automated HCL syntax corrections for common LLM hallucinations
@@ -775,6 +823,12 @@ def post_process_hcl_compliance(workspace_dir: str) -> None:
                     new_content = new_content[:full_block_start] + f'resource "aws_db_instance" "{db_local_name}" ' + new_block_str + subnet_group_resource + new_content[full_block_end:]
                     modified = True
                     print(f"[Corrector] Split subnet_ids from aws_db_instance.{db_local_name} into separate aws_db_subnet_group resource.")
+
+        # 4. Fix malformed security groups
+        cleaned_sg_content = fix_malformed_security_groups(new_content)
+        if cleaned_sg_content != new_content:
+            new_content = cleaned_sg_content
+            modified = True
 
         if modified:
             try:
