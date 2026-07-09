@@ -705,11 +705,21 @@ def generate_data_node(state: GraphState) -> dict:
 
     CONSTRAINT 2: Terraform resource labels must start with a letter. If the extracted AWS resource ID begins with a number (e.g., a UUID like 3a327099...), you MUST prepend a string like `mapping_` or `res_` to the local resource name (e.g., `resource "aws_lambda_event_source_mapping" "mapping_3a327099..."`).
 
-    CONSTRAINT 3 (DynamoDB): When generating an `aws_dynamodb_table` resource, DO NOT use the `attribute_definitions` list from the JSON input. You must convert it into individual Terraform `attribute {}` blocks. 
-    For example, instead of `attribute_definitions = [{name = "id", type = "S"}]`, you MUST write:
-    attribute {
-      name = "id"
-      type = "S"
+    CONSTRAINT 3 (DynamoDB): When generating an `aws_dynamodb_table` resource, DO NOT use a generic `attribute` block like `name = "id"` unless `id` is the actual `hash_key` or `range_key` of the table. You MUST ONLY define `attribute` blocks for attributes that are explicitly used as the `hash_key` or `range_key` in the key schema.
+    
+    CRITICAL DYNAMODB EXCEPTION:
+    If the resource type is 'aws_dynamodb_table', the 'attribute' block MUST match the 'key_schema' hash key perfectly. Do NOT output a generic attribute like 'id' if the hash_key is 'sessionId'.
+    
+    Example format:
+    resource "aws_dynamodb_table" "table_name" {
+      name         = "table-name"
+      billing_mode = "PAY_PER_REQUEST"
+      hash_key     = "sessionId"  # MUST match the key from the JSON
+    
+      attribute {
+        name = "sessionId"        # MUST match the hash_key exactly
+        type = "S"
+      }
     }
 
     CONSTRAINT 4 (Naming): Always use underscores instead of hyphens for Terraform resource names. (e.g., use `aws_sqs_queue.task_queue`, NEVER `aws_sqs_queue.task-queue`).
