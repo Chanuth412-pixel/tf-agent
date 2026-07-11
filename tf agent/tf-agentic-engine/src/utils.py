@@ -5,6 +5,8 @@ import json
 from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
 from config.settings import OLLAMA_BASE_URL, MODEL_NAME, NUM_CTX
+from pydantic import BaseModel, Field
+from typing import List, Optional
 
 
 """Utility helpers: prompts, LLM client, and HCL validation helpers."""
@@ -1496,8 +1498,86 @@ def filter_aws_input_data(aws_input_data: dict, node_type: str) -> dict:
             # Enforce Context Isolation & Schema Enforcement Layer by stripping forbidden fields
             allowed_fields = ALLOWED_RESOURCE_FIELDS.get(r_type, ["type", "id", "name", "tags"])
             sanitized_res = {k: v for k, v in normalized_res.items() if k in allowed_fields}
+            print(f"[Normalization Debug] Normalized {r_type}: {sanitized_res}")
             filtered_resources.append(sanitized_res)
             
     filtered["resources"] = filtered_resources
     return filtered
+
+
+class SecurityGroupRule(BaseModel):
+    from_port: int
+    to_port: int
+    protocol: str
+    cidr_blocks: List[str]
+    description: str = ""
+    ipv6_cidr_blocks: List[str] = []
+    prefix_list_ids: List[str] = []
+    security_groups: List[str] = []
+    self: bool = False
+
+
+class AWSDbInstance(BaseModel):
+    identifier: str
+    engine: str
+    instance_class: str
+    allocated_storage: int
+    db_subnet_group_name: str
+
+
+def to_hcl_val(val):
+    if isinstance(val, bool):
+        return str(val).lower()
+    elif isinstance(val, list):
+        items = [to_hcl_val(x) for x in val]
+        return "[" + ", ".join(items) + "]"
+    elif isinstance(val, str):
+        if val.startswith("aws_") or val.startswith("var."):
+            return val
+        return f'"{val}"'
+    return str(val)
+
+
+def synthesize_security_group_hcl(sg_data: dict) -> str:
+    """Deterministically compiles validated dict into HCL string."""
+    hcl = f'resource "aws_security_group" "{sg_data["id"]}" {{\n'
+    hcl += f'  name        = "{sg_data["name"]}"\n'
+    hcl += f'  description = "{sg_data.get("description", "Managed by Agent")}"\n'
+    
+    vpc_id = sg_data.get("vpc_id", "aws_vpc.main.id")
+    hcl += f'  vpc_id      = {to_hcl_val(vpc_id)}\n\n'
+    
+    for rule in sg_data.get("ingress", []):
+        # Validate using Pydantic model
+        validated_rule = SecurityGroupRule(**rule).dict()
+        hcl += '  ingress {\n'
+        hcl += f'    from_port       = {validated_rule["from_port"]}\n'
+        hcl += f'    to_port         = {validated_rule["to_port"]}\n'
+        hcl += f'    protocol        = "{validated_rule["protocol"]}"\n'
+        hcl += f'    cidr_blocks     = {to_hcl_val(validated_rule["cidr_blocks"])}\n'
+        hcl += f'    description     = "{validated_rule["description"]}"\n'
+        hcl += f'    ipv6_cidr_blocks= {to_hcl_val(validated_rule["ipv6_cidr_blocks"])}\n'
+        hcl += f'    prefix_list_ids = {to_hcl_val(validated_rule["prefix_list_ids"])}\n'
+        hcl += f'    security_groups = {to_hcl_val(validated_rule["security_groups"])}\n'
+        hcl += f'    self            = {str(validated_rule["self"]).lower()}\n'
+        hcl += '  }\n'
+        
+    for rule in sg_data.get("egress", []):
+        # Validate using Pydantic model
+        validated_rule = SecurityGroupRule(**rule).dict()
+        hcl += '  egress {\n'
+        hcl += f'    from_port       = {validated_rule["from_port"]}\n'
+        hcl += f'    to_port         = {validated_rule["to_port"]}\n'
+        hcl += f'    protocol        = "{validated_rule["protocol"]}"\n'
+        hcl += f'    cidr_blocks     = {to_hcl_val(validated_rule["cidr_blocks"])}\n'
+        hcl += f'    description     = "{validated_rule["description"]}"\n'
+        hcl += f'    ipv6_cidr_blocks= {to_hcl_val(validated_rule["ipv6_cidr_blocks"])}\n'
+        hcl += f'    prefix_list_ids = {to_hcl_val(validated_rule["prefix_list_ids"])}\n'
+        hcl += f'    security_groups = {to_hcl_val(validated_rule["security_groups"])}\n'
+        hcl += f'    self            = {str(validated_rule["self"]).lower()}\n'
+        hcl += '  }\n'
+        
+    hcl += '}\n'
+    return hcl
+
 

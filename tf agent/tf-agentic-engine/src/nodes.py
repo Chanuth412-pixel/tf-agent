@@ -1,5 +1,7 @@
 import os
 import sys
+import json
+from langchain_core.output_parsers import JsonOutputParser
 from src.state import GraphState, create_initial_state
 from src.utils import (
     call_cloud_llm,
@@ -13,6 +15,9 @@ from src.utils import (
     filter_aws_input_data,
     COMPLIANCE_RULES,
     clean_hcl_output,
+    SecurityGroupRule,
+    AWSDbInstance,
+    synthesize_security_group_hcl,
 )
 
 
@@ -320,10 +325,6 @@ def generate_security_node(state: GraphState) -> dict:
     - Never emit an empty or partially populated ingress/egress block.
     - Ensure all variable assignments match valid structural integers or strings.
 
-    CRITICAL IAM EXCEPTION:
-    If the resource type is 'aws_iam_role', Terraform strictly REQUIRES an 'assume_role_policy'.
-    If the JSON does not contain one, you MUST inject this exact default policy into the block:
-    
     assume_role_policy = jsonencode({
       Version = "2012-10-17"
       Statement = [{
@@ -332,6 +333,14 @@ def generate_security_node(state: GraphState) -> dict:
         Principal = { Service = "ec2.amazonaws.com" }
       }]
     })
+
+    CRITICAL SECURITY GROUP EXCEPTION:
+    When creating inline 'ingress' or 'egress' blocks within an 'aws_security_group', you MUST explicitly define all required schema attributes to satisfy strict type checking. Include these exact default values in every block alongside your ports and protocols:
+    description      = ""
+    ipv6_cidr_blocks = []
+    prefix_list_ids  = []
+    security_groups  = []
+    self             = false
     """
     prompt = mode_instructions + "\n" + security_constraint + "\n" + SECURITY_PROMPT
 
@@ -402,19 +411,76 @@ def generate_security_node(state: GraphState) -> dict:
             
             if val_errors:
                 single_prompt = val_errors + "\n" + single_prompt
+
+            if r_type == "aws_security_group":
+                print(f"[Schema validation] Executing parser routing for Security Group: {r_id}")
+                json_parser = JsonOutputParser()
+                security_node_prompt = """
+                You are a strict JSON data generator for AWS security groups.
+                Analyze the input resource and output a single valid JSON object representing the security group.
+
+                CRITICAL INSTRUCTIONS:
+                1. DO NOT output Terraform HCL code.
+                2. DO NOT wrap the output in markdown blocks (e.g. ```json).
+                3. Output ONLY the raw JSON object.
+                4. The JSON keys must match exactly: "id", "name", "description", "vpc_id", "ingress", "egress".
                 
-            block = call_cloud_llm(
-                single_prompt,
-                {
-                    "aws_input_data": single_input,
-                    "user_prompt": prompt_user,
-                    "network_context": (
-                        "An existing VPC named 'aws_vpc.main' and subnets 'aws_subnet.public_1' "
-                        "and 'aws_subnet.private_1' are already declared. DO NOT rewrite them."
-                    ),
-                },
-            )
-            block = clean_hcl_output(block)
+                Input Resource Details:
+                ID/Name: {r_id}
+                VpcId: {vpc_id}
+                Ingress rules: {ingress}
+                Egress rules: {egress}
+                """
+                
+                vpc_id_val = resource.get("vpc_id") or aws_input.get("vpc_id") or "aws_vpc.main.id"
+                formatted_prompt = security_node_prompt.format(
+                    r_id=r_id,
+                    vpc_id=vpc_id_val,
+                    ingress=resource.get("ingress", []),
+                    egress=resource.get("egress", [])
+                )
+                
+                raw_llm_response = call_cloud_llm(
+                    formatted_prompt,
+                    {
+                        "aws_input_data": json.dumps(resource),
+                        "user_prompt": state.get("user_prompt"),
+                    }
+                )
+                
+                try:
+                    cleaned_resp = raw_llm_response.strip().strip("`").replace("json", "", 1).strip()
+                    parsed_data = json_parser.parse(cleaned_resp)
+                    block = synthesize_security_group_hcl(parsed_data)
+                    print(f"[DEBUG] Successfully validated and synthesized HCL for Security Group: {r_id}")
+                except Exception as e:
+                    print(f"[ERROR] Schema Validation Failed for {r_id}: {str(e)}. Falling back to direct generator...")
+                    # Fallback
+                    block = call_cloud_llm(
+                        single_prompt,
+                        {
+                            "aws_input_data": single_input,
+                            "user_prompt": prompt_user,
+                            "network_context": (
+                                "An existing VPC named 'aws_vpc.main' and subnets 'aws_subnet.public_1' "
+                                "and 'aws_subnet.private_1' are already declared. DO NOT rewrite them."
+                            ),
+                        },
+                    )
+                    block = clean_hcl_output(block)
+            else:
+                block = call_cloud_llm(
+                    single_prompt,
+                    {
+                        "aws_input_data": single_input,
+                        "user_prompt": prompt_user,
+                        "network_context": (
+                            "An existing VPC named 'aws_vpc.main' and subnets 'aws_subnet.public_1' "
+                            "and 'aws_subnet.private_1' are already declared. DO NOT rewrite them."
+                        ),
+                    },
+                )
+                block = clean_hcl_output(block)
             print(f"[DEBUG] Received HCL block for {r_id}: {len(block)} characters")
             hcl_blocks.append(block)
         hcl = "\n\n".join(hcl_blocks)
@@ -708,19 +774,22 @@ def generate_data_node(state: GraphState) -> dict:
     CONSTRAINT 3 (DynamoDB): When generating an `aws_dynamodb_table` resource, DO NOT use a generic `attribute` block like `name = "id"` unless `id` is the actual `hash_key` or `range_key` of the table. You MUST ONLY define `attribute` blocks for attributes that are explicitly used as the `hash_key` or `range_key` in the key schema.
     
     CRITICAL DYNAMODB EXCEPTION:
-    If the resource type is 'aws_dynamodb_table', the 'attribute' block MUST match the 'key_schema' hash key perfectly. Do NOT output a generic attribute like 'id' if the hash_key is 'sessionId'.
+    If the resource type is 'aws_dynamodb_table', the 'attribute' block MUST match the 'key_schema' hash key perfectly. Do NOT output a generic attribute like 'id' if the hash_key is different.
     
     Example format:
-    resource "aws_dynamodb_table" "table_name" {
-      name         = "table-name"
-      billing_mode = "PAY_PER_REQUEST"
-      hash_key     = "sessionId"  # MUST match the key from the JSON
-    
+    resource "aws_dynamodb_table" "${resource_id}" {
+      name         = "${table_name}"
+      billing_mode = "${billing_mode}"
+      hash_key     = "${hash_key}"
+
       attribute {
-        name = "sessionId"        # MUST match the hash_key exactly
-        type = "S"
+        name = "${attribute_name}"
+        type = "${attribute_type}"
       }
     }
+
+    CRITICAL RDS EXCEPTION 2:
+    If the resource type is 'aws_db_instance', you MUST NOT use the argument 'name'. You must map the name value to the 'identifier' argument.
 
     CONSTRAINT 4 (Naming): Always use underscores instead of hyphens for Terraform resource names. (e.g., use `aws_sqs_queue.task_queue`, NEVER `aws_sqs_queue.task-queue`).
     CONSTRAINT 5 (Imports): In an `import` block, the `to` attribute must only contain the resource type and name. NEVER prepend it with `resource.`. (e.g., use `to = aws_sqs_queue.main`, NEVER `to = resource.aws_sqs_queue.main`).
