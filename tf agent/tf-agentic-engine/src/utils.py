@@ -1404,17 +1404,29 @@ def scrub_deprecated_s3_syntax(workspace_dir: str = "terraform_workspace"):
 def normalize_dynamodb_table(raw_payload: dict) -> dict:
     """Extracts strictly declarative attributes for DynamoDB tables."""
     key_schema = raw_payload.get("KeySchema", [])
-    hash_key = next((k["AttributeName"] for k in key_schema if k["KeyType"] == "HASH"), None)
+    hash_key = next((k["AttributeName"] for k in key_schema if k.get("KeyType") == "HASH"), None)
+    hash_key = hash_key or raw_payload.get("hash_key", "id") # Fallback to 'id'
     
-    attributes = raw_payload.get("AttributeDefinitions", [])
+    raw_attributes = raw_payload.get("AttributeDefinitions", raw_payload.get("attributes", []))
+    attributes = [{"name": a.get("AttributeName", a.get("name")), "type": a.get("AttributeType", a.get("type", "S"))} for a in raw_attributes]
     
+    # FIX 1: Enforce that the hash_key MUST exist in the attribute definitions
+    attr_names = [a["name"] for a in attributes]
+    if hash_key not in attr_names:
+        attributes.append({"name": hash_key, "type": "S"}) # Defaulting to String type
+        
+    billing_mode = raw_payload.get("BillingModeSummary", {}).get("BillingMode", raw_payload.get("billing_mode", "PROVISIONED"))
+
     return {
         "type": "aws_dynamodb_table",
         "id": raw_payload.get("TableName", raw_payload.get("name")),
         "name": raw_payload.get("TableName", raw_payload.get("name")),
-        "billing_mode": raw_payload.get("BillingModeSummary", {}).get("BillingMode", raw_payload.get("billing_mode", "PROVISIONED")),
-        "hash_key": hash_key or raw_payload.get("hash_key"),
-        "attributes": [{"name": a.get("AttributeName", a.get("name")), "type": a.get("AttributeType", a.get("type"))} for a in attributes],
+        "billing_mode": billing_mode,
+        "hash_key": hash_key,
+        "attributes": attributes,
+        # FIX 2: Default capacities if mode is PROVISIONED
+        "read_capacity": int(raw_payload.get("read_capacity", 5)) if billing_mode == "PROVISIONED" else None,
+        "write_capacity": int(raw_payload.get("write_capacity", 5)) if billing_mode == "PROVISIONED" else None,
         "tags": raw_payload.get("tags", {})
     }
 
@@ -1457,7 +1469,7 @@ ALLOWED_RESOURCE_FIELDS = {
     "aws_s3_bucket_versioning": ["type", "id", "name", "bucket", "versioning_configuration", "tags"],
     "aws_db_instance": ["type", "id", "name", "allocated_storage", "engine", "engine_version", "instance_class", "db_name", "username", "password", "db_subnet_group_name", "vpc_security_group_ids", "skip_final_snapshot", "storage_encrypted", "tags"],
     "aws_db_subnet_group": ["type", "id", "name", "subnet_ids", "tags"],
-    "aws_dynamodb_table": ["type", "id", "name", "billing_mode", "hash_key", "range_key", "attributes", "tags"],
+    "aws_dynamodb_table": ["type", "id", "name", "billing_mode", "hash_key", "range_key", "attributes", "read_capacity", "write_capacity", "tags"],
     "aws_sqs_queue": ["type", "id", "name", "tags"],
     "aws_lambda_function": ["type", "id", "name", "runtime", "role", "handler", "filename", "source_code_hash", "environment", "tags"],
     "aws_lambda_event_source_mapping": ["type", "id", "name", "event_source_arn", "function_name", "tags"]
@@ -1579,5 +1591,29 @@ def synthesize_security_group_hcl(sg_data: dict) -> str:
         
     hcl += '}\n'
     return hcl
+
+
+def synthesize_dynamodb_hcl(table_data: dict) -> str:
+    """Deterministically compiles validated DynamoDB dict into strict HCL."""
+    hcl = f'resource "aws_dynamodb_table" "{table_data["name"]}" {{\n'
+    hcl += f'  name         = "{table_data["name"]}"\n'
+    hcl += f'  billing_mode = "{table_data["billing_mode"]}"\n'
+    hcl += f'  hash_key     = "{table_data["hash_key"]}"\n\n'
+    
+    # Add capacities if provisioned
+    if table_data["billing_mode"] == "PROVISIONED":
+        hcl += f'  read_capacity  = {table_data["read_capacity"]}\n'
+        hcl += f'  write_capacity = {table_data["write_capacity"]}\n\n'
+        
+    # Write out the structural attributes
+    for attr in table_data["attributes"]:
+        hcl += '  attribute {\n'
+        hcl += f'    name = "{attr["name"]}"\n'
+        hcl += f'    type = "{attr["type"]}"\n'
+        hcl += '  }\n\n'
+        
+    hcl += '}\n'
+    return hcl
+
 
 

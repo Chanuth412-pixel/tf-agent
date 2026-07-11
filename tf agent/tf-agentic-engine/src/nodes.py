@@ -18,6 +18,7 @@ from src.utils import (
     SecurityGroupRule,
     AWSDbInstance,
     synthesize_security_group_hcl,
+    synthesize_dynamodb_hcl,
 )
 
 
