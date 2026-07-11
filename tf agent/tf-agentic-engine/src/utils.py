@@ -1399,6 +1399,69 @@ def scrub_deprecated_s3_syntax(workspace_dir: str = "terraform_workspace"):
             f.writelines(new_lines)
 
 
+def normalize_dynamodb_table(raw_payload: dict) -> dict:
+    """Extracts strictly declarative attributes for DynamoDB tables."""
+    key_schema = raw_payload.get("KeySchema", [])
+    hash_key = next((k["AttributeName"] for k in key_schema if k["KeyType"] == "HASH"), None)
+    
+    attributes = raw_payload.get("AttributeDefinitions", [])
+    
+    return {
+        "type": "aws_dynamodb_table",
+        "id": raw_payload.get("TableName", raw_payload.get("name")),
+        "name": raw_payload.get("TableName", raw_payload.get("name")),
+        "billing_mode": raw_payload.get("BillingModeSummary", {}).get("BillingMode", raw_payload.get("billing_mode", "PROVISIONED")),
+        "hash_key": hash_key or raw_payload.get("hash_key"),
+        "attributes": [{"name": a.get("AttributeName", a.get("name")), "type": a.get("AttributeType", a.get("type"))} for a in attributes],
+        "tags": raw_payload.get("tags", {})
+    }
+
+def normalize_ec2_instance(raw_payload: dict) -> dict:
+    """Extracts strictly declarative attributes for EC2 instances."""
+    return {
+        "type": "aws_instance",
+        "id": raw_payload.get("InstanceId", raw_payload.get("id")),
+        "instance_type": raw_payload.get("InstanceType", raw_payload.get("instance_type")),
+        "ami": raw_payload.get("ImageId", raw_payload.get("ami")),
+        "subnet_id": raw_payload.get("SubnetId", raw_payload.get("subnet_id")),
+        "tags": raw_payload.get("tags", {})
+    }
+
+def normalize_aws_resource(resource_type: str, raw_payload: dict) -> dict:
+    """Routes the raw payload to the correct resource normalizer."""
+    if resource_type == "aws_dynamodb_table":
+        return normalize_dynamodb_table(raw_payload)
+    elif resource_type == "aws_instance":
+        return normalize_ec2_instance(raw_payload)
+    
+    # Return payload as-is if no specific normalizer is defined yet
+    return raw_payload
+
+ALLOWED_RESOURCE_FIELDS = {
+    "aws_vpc": ["type", "id", "name", "cidr_block", "enable_dns_hostnames", "enable_dns_support", "tags"],
+    "aws_subnet": ["type", "id", "name", "vpc_id", "cidr_block", "availability_zone", "map_public_ip_on_launch", "tags"],
+    "aws_internet_gateway": ["type", "id", "name", "vpc_id", "tags"],
+    "aws_nat_gateway": ["type", "id", "name", "subnet_id", "allocation_id", "tags"],
+    "aws_route_table": ["type", "id", "name", "vpc_id", "routes", "tags"],
+    "aws_iam_role": ["type", "id", "name", "assume_role_policy", "tags"],
+    "aws_iam_policy": ["type", "id", "name", "policy", "tags"],
+    "aws_security_group": ["type", "id", "name", "description", "vpc_id", "ingress", "egress", "tags"],
+    "aws_instance": ["type", "id", "name", "ami", "instance_type", "subnet_id", "vpc_security_group_ids", "key_name", "tags", "user_data"],
+    "aws_eks_cluster": ["type", "id", "name", "role_arn", "resources_vpc_config", "tags"],
+    "aws_eks_node_group": ["type", "id", "name", "cluster_name", "node_role", "subnets", "scaling_config", "instance_types", "tags"],
+    "aws_autoscaling_group": ["type", "id", "name", "vpc_zone_identifier", "launch_template", "min_size", "max_size", "desired_capacity", "tags"],
+    "aws_launch_template": ["type", "id", "name", "image_id", "instance_type", "key_name", "vpc_security_group_ids", "tags"],
+    "aws_s3_bucket": ["type", "id", "name", "bucket", "tags"],
+    "aws_s3_bucket_versioning": ["type", "id", "name", "bucket", "versioning_configuration", "tags"],
+    "aws_db_instance": ["type", "id", "name", "allocated_storage", "engine", "engine_version", "instance_class", "db_name", "username", "password", "db_subnet_group_name", "vpc_security_group_ids", "skip_final_snapshot", "storage_encrypted", "tags"],
+    "aws_db_subnet_group": ["type", "id", "name", "subnet_ids", "tags"],
+    "aws_dynamodb_table": ["type", "id", "name", "billing_mode", "hash_key", "range_key", "attributes", "tags"],
+    "aws_sqs_queue": ["type", "id", "name", "tags"],
+    "aws_lambda_function": ["type", "id", "name", "runtime", "role", "handler", "filename", "source_code_hash", "environment", "tags"],
+    "aws_lambda_event_source_mapping": ["type", "id", "name", "event_source_arn", "function_name", "tags"]
+}
+
+
 def filter_aws_input_data(aws_input_data: dict, node_type: str) -> dict:
     """Filters the telemetry payload so nodes only receive their respective domain resources."""
     if not aws_input_data or not isinstance(aws_input_data, dict):
@@ -1424,9 +1487,17 @@ def filter_aws_input_data(aws_input_data: dict, node_type: str) -> dict:
     else:
         allowed = []
         
-    filtered["resources"] = [
-        r for r in aws_input_data.get("resources", [])
-        if r.get("type") in allowed
-    ]
+    filtered_resources = []
+    for r in aws_input_data.get("resources", []):
+        r_type = r.get("type")
+        if r_type in allowed:
+            # Normalize resource to clean schema
+            normalized_res = normalize_aws_resource(r_type, r)
+            # Enforce Context Isolation & Schema Enforcement Layer by stripping forbidden fields
+            allowed_fields = ALLOWED_RESOURCE_FIELDS.get(r_type, ["type", "id", "name", "tags"])
+            sanitized_res = {k: v for k, v in normalized_res.items() if k in allowed_fields}
+            filtered_resources.append(sanitized_res)
+            
+    filtered["resources"] = filtered_resources
     return filtered
 
