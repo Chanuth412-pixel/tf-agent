@@ -1187,6 +1187,10 @@ def generate_png_graph(state: dict, workspace_dir: str = "terraform_workspace") 
     nodes = infra_graph.get("nodes", {})
     edges = infra_graph.get("edges", [])
 
+    from config.settings import DEBUG
+    if DEBUG:
+        print(f"[DEBUG RENDERER] Total edges received for drawing: {len(edges)}")
+
     # Group nodes by domain
     domains = {
         "Network": [],
