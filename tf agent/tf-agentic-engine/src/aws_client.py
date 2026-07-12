@@ -190,6 +190,8 @@ def fetch_live_infrastructure(region_name=None):
                         "image_id": inst.get('ImageId'),  # Grab the exact ImageId of the running instance
                         "instance_type": inst['InstanceType'],
                         "subnet_id": inst.get('SubnetId', 'Unknown'),
+                        "security_groups": [sg['GroupId'] for sg in inst.get('SecurityGroups', [])],
+                        "vpc_security_group_ids": [sg['GroupId'] for sg in inst.get('SecurityGroups', [])],
                         "tags": get_tags_dict(inst.get('Tags', []))
                     })
                 
@@ -490,7 +492,12 @@ def compile_infrastructure_graph(raw_data, mode):
             # Extract Edges based on explicit structural attachment keys
             
             # VPC container relationship
-            vpc_ref = resource.get("vpc_id") or resource.get("VpcId")
+            vpc_ref = (
+                resource.get("vpc_id") or 
+                resource.get("VpcId") or 
+                resource.get("attributes", {}).get("vpc_id") or 
+                resource.get("attributes", {}).get("VpcId")
+            )
             if vpc_ref:
                 edges.append({
                     "source": node_id,
@@ -499,7 +506,12 @@ def compile_infrastructure_graph(raw_data, mode):
                 })
 
             # Subnet deployed relationship
-            subnet_ref = resource.get("subnet_id") or resource.get("SubnetId")
+            subnet_ref = (
+                resource.get("subnet_id") or 
+                resource.get("SubnetId") or 
+                resource.get("attributes", {}).get("subnet_id") or 
+                resource.get("attributes", {}).get("SubnetId")
+            )
             if subnet_ref:
                 edges.append({
                     "source": node_id,
@@ -508,7 +520,22 @@ def compile_infrastructure_graph(raw_data, mode):
                 })
 
             # Security group relationship (e.g. EC2 instance SecurityGroups)
-            sg_list = resource.get("SecurityGroups") or resource.get("security_groups") or []
+            sg_list = (
+                resource.get("SecurityGroups") or 
+                resource.get("security_groups") or 
+                resource.get("vpc_security_group_ids") or 
+                resource.get("attributes", {}).get("vpc_security_group_ids") or 
+                resource.get("attributes", {}).get("security_groups") or 
+                []
+            )
+            from config.settings import DEBUG
+            if DEBUG and res_type == "aws_instance":
+                print(f"[DEBUG GRAPH PARSER] Resource: {node_id}")
+                print(f"[DEBUG GRAPH PARSER] Raw dictionary keys: {list(resource.keys())}")
+                print(f"[DEBUG GRAPH PARSER] SG IDs found: {sg_list}")
+
+            if isinstance(sg_list, str):
+                sg_list = [sg_list]
             for sg in sg_list:
                 sg_id = None
                 if isinstance(sg, dict):
@@ -516,10 +543,11 @@ def compile_infrastructure_graph(raw_data, mode):
                 elif isinstance(sg, str):
                     sg_id = sg
                 if sg_id:
+                    relation = "protected_by" if res_type in ["aws_instance", "aws_eks_cluster", "aws_eks_node_group", "aws_autoscaling_group", "aws_launch_template"] else "uses"
                     edges.append({
                         "source": node_id,
                         "target": f"aws_security_group.{sg_id}",
-                        "relation": "uses"
+                        "relation": relation
                     })
 
             # Launch template relationship
@@ -627,10 +655,15 @@ def compile_infrastructure_graph(raw_data, mode):
                 # Search for reference with word boundaries to ensure it's not a substring of a larger identifier
                 ref_pattern = r'\b' + re.escape(other_id) + r'\b'
                 if re.search(ref_pattern, block_text):
+                    res_type_curr = current_id.split('.')[0]
+                    res_type_other = other_id.split('.')[0]
+                    relation = "depends_on"
+                    if res_type_curr in ["aws_instance", "aws_eks_cluster", "aws_eks_node_group", "aws_autoscaling_group", "aws_launch_template"] and res_type_other == "aws_security_group":
+                        relation = "protected_by"
                     edges.append({
                         "source": current_id,
                         "target": other_id,
-                        "relation": "depends_on"
+                        "relation": relation
                     })
 
     return {
