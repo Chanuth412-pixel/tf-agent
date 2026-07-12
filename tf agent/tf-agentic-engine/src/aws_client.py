@@ -516,10 +516,11 @@ def compile_infrastructure_graph(raw_data, mode):
                 elif isinstance(sg, str):
                     sg_id = sg
                 if sg_id:
+                    relation = "protected_by" if res_type in ["aws_instance", "aws_eks_cluster", "aws_eks_node_group", "aws_autoscaling_group", "aws_launch_template"] else "uses"
                     edges.append({
                         "source": node_id,
                         "target": f"aws_security_group.{sg_id}",
-                        "relation": "uses"
+                        "relation": relation
                     })
 
             # Launch template relationship
@@ -627,10 +628,15 @@ def compile_infrastructure_graph(raw_data, mode):
                 # Search for reference with word boundaries to ensure it's not a substring of a larger identifier
                 ref_pattern = r'\b' + re.escape(other_id) + r'\b'
                 if re.search(ref_pattern, block_text):
+                    res_type_curr = current_id.split('.')[0]
+                    res_type_other = other_id.split('.')[0]
+                    relation = "depends_on"
+                    if res_type_curr in ["aws_instance", "aws_eks_cluster", "aws_eks_node_group", "aws_autoscaling_group", "aws_launch_template"] and res_type_other == "aws_security_group":
+                        relation = "protected_by"
                     edges.append({
                         "source": current_id,
                         "target": other_id,
-                        "relation": "depends_on"
+                        "relation": relation
                     })
 
     return {
