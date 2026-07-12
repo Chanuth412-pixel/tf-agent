@@ -1211,7 +1211,12 @@ def generate_png_graph(state: dict, workspace_dir: str = "terraform_workspace") 
     dot_lines = [
         "digraph G {",
         "  rankdir=TB;",
-        '  node [style="filled", shape="box", fontname="Arial"];'
+        "  compound=true;",
+        "  nodesep=1.0;",
+        "  ranksep=1.5;",
+        "  splines=ortho;",
+        "  concentrate=true;",
+        '  node [style="filled", shape="box", fontname="Arial", fontsize=11, margin="0.2,0.1"];'
     ]
 
     domain_styles = {
