@@ -4,7 +4,7 @@ import subprocess
 import json
 from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
-from config.settings import OLLAMA_BASE_URL, MODEL_NAME, NUM_CTX
+from config.settings import OLLAMA_BASE_URL, MODEL_NAME, NUM_CTX, DEBUG
 
 
 """Utility helpers: prompts, LLM client, and HCL validation helpers."""
@@ -162,7 +162,8 @@ Your entire output must be parseable by the `terraform fmt` command.
         
     prompt = ChatPromptTemplate.from_template(escaped_prompt)
     chain = prompt | llm
-    print(f"    [LLM] Sending request to local Ollama ({MODEL_NAME}) with num_ctx={NUM_CTX}...")
+    if DEBUG:
+        print(f"    [LLM] Sending request to local Ollama ({MODEL_NAME}) with num_ctx={NUM_CTX}...")
     response = chain.invoke(input_variables)
     return response.content
 

@@ -187,6 +187,7 @@ MODEL_NAME = "llama3:70b"
 OLLAMA_BASE_URL = "http://localhost:11434"
 NUM_CTX = 8192  # Expanded token window required to prevent topology truncation
 MAX_RETRY_COUNT = 3
+DEBUG = False  # Toggle this to True/False to enable/disable debug messages (can also be set via DEBUG environment variable)
 ```
 
 ---

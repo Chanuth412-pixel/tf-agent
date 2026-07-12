@@ -1,6 +1,7 @@
 import os
 import sys
 from src.state import GraphState, create_initial_state
+from config.settings import DEBUG
 from src.utils import (
     call_cloud_llm,
     parse_and_write_files,
@@ -195,7 +196,8 @@ def generate_network_node(state: GraphState) -> dict:
             r_id = resource.get('id') or resource.get('name') or "unnamed"
             r_type = resource.get('type') or "unknown"
             
-            print(f"\n[DEBUG] 🚀 Sending to LLM -> Type: {r_type} | ID: {r_id}")
+            if DEBUG:
+                print(f"\n[DEBUG] 🚀 Sending to LLM -> Type: {r_type} | ID: {r_id}")
             
             single_input = {
                 "region": aws_input.get("region"),
@@ -231,10 +233,10 @@ def generate_network_node(state: GraphState) -> dict:
                 },
             )
             block = clean_hcl_output(block)
-            print(f"[DEBUG] 📥 Received from LLM -> {len(block)} characters")
-            if len(block) < 20:
-                print(f"[DEBUG] ⚠️ WARNING: Suspiciously short block: {block}")
-                
+            if DEBUG:
+                print(f"[DEBUG] 📥 Received from LLM -> {len(block)} characters")
+                if len(block) < 20:
+                    print(f"[DEBUG] ⚠️ WARNING: Suspiciously short block: {block}")
             hcl_blocks.append(block)
         hcl = "\n\n".join(hcl_blocks)
         
@@ -375,7 +377,8 @@ def generate_security_node(state: GraphState) -> dict:
         for resource in resources:
             r_id = resource.get('id') or resource.get('name') or "unnamed"
             r_type = resource.get('type') or "unknown"
-            print(f"[DEBUG] Sending resource to LLM: {r_id} | Type: {r_type}")
+            if DEBUG:
+                print(f"[DEBUG] Sending resource to LLM: {r_id} | Type: {r_type}")
             
             single_input = {
                 "region": aws_input.get("region"),
@@ -415,7 +418,8 @@ def generate_security_node(state: GraphState) -> dict:
                 },
             )
             block = clean_hcl_output(block)
-            print(f"[DEBUG] Received HCL block for {r_id}: {len(block)} characters")
+            if DEBUG:
+                print(f"[DEBUG] Received HCL block for {r_id}: {len(block)} characters")
             hcl_blocks.append(block)
         hcl = "\n\n".join(hcl_blocks)
         
@@ -580,7 +584,8 @@ def generate_compute_node(state: GraphState) -> dict:
             r_id = resource.get('id') or resource.get('name') or "unnamed"
             r_type = resource.get('type') or "unknown"
             
-            print(f"\n[DEBUG] 🚀 Sending to LLM -> Type: {r_type} | ID: {r_id}")
+            if DEBUG:
+                print(f"\n[DEBUG] 🚀 Sending to LLM -> Type: {r_type} | ID: {r_id}")
             
             single_input = {
                 "region": aws_input.get("region"),
@@ -625,10 +630,10 @@ def generate_compute_node(state: GraphState) -> dict:
                 },
             )
             block = clean_hcl_output(block)
-            print(f"[DEBUG] 📥 Received from LLM -> {len(block)} characters")
-            if len(block) < 20:
-                print(f"[DEBUG] ⚠️ WARNING: Suspiciously short block: {block}")
-                
+            if DEBUG:
+                print(f"[DEBUG] 📥 Received from LLM -> {len(block)} characters")
+                if len(block) < 20:
+                    print(f"[DEBUG] ⚠️ WARNING: Suspiciously short block: {block}")
             hcl_blocks.append(block)
         hcl = "\n\n".join(hcl_blocks)
         
@@ -768,7 +773,8 @@ def generate_data_node(state: GraphState) -> dict:
         for resource in resources:
             r_id = resource.get('id') or resource.get('name') or "unnamed"
             r_type = resource.get('type') or "unknown"
-            print(f"[DEBUG] Sending resource to LLM: {r_id} | Type: {r_type}")
+            if DEBUG:
+                print(f"[DEBUG] Sending resource to LLM: {r_id} | Type: {r_type}")
             
             single_input = {
                 "region": aws_input.get("region"),
@@ -813,7 +819,8 @@ def generate_data_node(state: GraphState) -> dict:
                 },
             )
             block = clean_hcl_output(block)
-            print(f"[DEBUG] Received HCL block for {r_id}: {len(block)} characters")
+            if DEBUG:
+                print(f"[DEBUG] Received HCL block for {r_id}: {len(block)} characters")
             hcl_blocks.append(block)
         hcl = "\n\n".join(hcl_blocks)
         
