@@ -465,7 +465,7 @@ def compile_infrastructure_graph(raw_data, mode):
         elif isinstance(raw_data, dict):
             # Try to grab the first VPC if present, to represent it as a node
             vpc_id = raw_data.get("vpc_id")
-            if vpc_id:
+            if vpc_id and isinstance(vpc_id, str):
                 clean_vpc_id = vpc_id.replace('-', '_')
                 nodes[f"aws_vpc.{clean_vpc_id}"] = {
                     "type": "aws_vpc",
@@ -480,7 +480,7 @@ def compile_infrastructure_graph(raw_data, mode):
             if not res_type or not res_id:
                 continue
 
-            clean_res_id = res_id.replace('-', '_')
+            clean_res_id = str(res_id).replace('-', '_')
             node_id = f"{res_type}.{clean_res_id}"
             tags = resource.get("tags") or {}
             display_name = tags.get("Name") or resource.get("name") or resource.get("bucket") or res_id
@@ -500,7 +500,7 @@ def compile_infrastructure_graph(raw_data, mode):
                 resource.get("attributes", {}).get("vpc_id") or 
                 resource.get("attributes", {}).get("VpcId")
             )
-            if vpc_ref:
+            if vpc_ref and isinstance(vpc_ref, str):
                 clean_vpc_ref = vpc_ref.replace('-', '_')
                 edges.append({
                     "source": node_id,
@@ -515,7 +515,7 @@ def compile_infrastructure_graph(raw_data, mode):
                 resource.get("attributes", {}).get("subnet_id") or 
                 resource.get("attributes", {}).get("SubnetId")
             )
-            if subnet_ref:
+            if subnet_ref and isinstance(subnet_ref, str):
                 clean_subnet_ref = subnet_ref.replace('-', '_')
                 edges.append({
                     "source": node_id,
@@ -540,20 +540,21 @@ def compile_infrastructure_graph(raw_data, mode):
 
             if isinstance(sg_list, str):
                 sg_list = [sg_list]
-            for sg in sg_list:
-                sg_id = None
-                if isinstance(sg, dict):
-                    sg_id = sg.get("GroupId") or sg.get("group_id")
-                elif isinstance(sg, str):
-                    sg_id = sg
-                if sg_id:
-                    clean_sg_id = sg_id.replace('-', '_')
-                    relation = "protected_by" if res_type in ["aws_instance", "aws_eks_cluster", "aws_eks_node_group", "aws_autoscaling_group", "aws_launch_template"] else "uses"
-                    edges.append({
-                        "source": node_id,
-                        "target": f"aws_security_group.{clean_sg_id}",
-                        "relation": relation
-                    })
+            if isinstance(sg_list, list):
+                for sg in sg_list:
+                    sg_id = None
+                    if isinstance(sg, dict):
+                        sg_id = sg.get("GroupId") or sg.get("group_id")
+                    elif isinstance(sg, str):
+                        sg_id = sg
+                    if sg_id and isinstance(sg_id, str):
+                        clean_sg_id = sg_id.replace('-', '_')
+                        relation = "protected_by" if res_type in ["aws_instance", "aws_eks_cluster", "aws_eks_node_group", "aws_autoscaling_group", "aws_launch_template"] else "uses"
+                        edges.append({
+                            "source": node_id,
+                            "target": f"aws_security_group.{clean_sg_id}",
+                            "relation": relation
+                        })
 
             # Launch template relationship
             lt_ref = resource.get("launch_template_id") or resource.get("LaunchTemplateId")
