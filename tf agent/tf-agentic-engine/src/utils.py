@@ -1259,6 +1259,12 @@ def generate_png_graph(state: dict, workspace_dir: str = "terraform_workspace") 
     with open(dot_file_path, "w", encoding="utf-8") as f:
         f.write(dot_content)
 
+    from config.settings import DEBUG
+    if DEBUG:
+        print("\n--- GENERATED DOT CONTENT ---")
+        print(dot_content)
+        print("-----------------------------\n")
+
     # Convert dot to png using the dot CLI tool
     try:
         subprocess.run(
