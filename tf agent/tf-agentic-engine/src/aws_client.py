@@ -491,81 +491,82 @@ def compile_infrastructure_graph(raw_data, mode):
                 "display_name": display_name
             }
 
-            # Extract Edges based on explicit structural attachment keys
-            
-            # VPC container relationship
-            vpc_ref = (
-                resource.get("vpc_id") or 
-                resource.get("VpcId") or 
-                resource.get("attributes", {}).get("vpc_id") or 
-                resource.get("attributes", {}).get("VpcId")
-            )
-            if vpc_ref and isinstance(vpc_ref, str):
-                clean_vpc_ref = vpc_ref.replace('-', '_')
-                edges.append({
-                    "source": node_id,
-                    "target": f"aws_vpc.{clean_vpc_ref}",
-                    "relation": "isolated_by" if res_type == "aws_security_group" else "contained_in"
-                })
+            # 1. Map Subnets and Security Groups to VPCs
+            if res_type in ["aws_subnet", "aws_security_group"]:
+                vpc_ref = (
+                    resource.get("vpc_id") or 
+                    resource.get("VpcId") or 
+                    resource.get("attributes", {}).get("vpc_id") or 
+                    resource.get("attributes", {}).get("VpcId")
+                )
+                if vpc_ref and isinstance(vpc_ref, str):
+                    clean_vpc_ref = vpc_ref.replace('-', '_')
+                    relation = "isolated_by" if res_type == "aws_security_group" else "contained_in"
+                    edges.append({
+                        "source": node_id,
+                        "target": f"aws_vpc.{clean_vpc_ref}",
+                        "relation": relation
+                    })
 
-            # Subnet deployed relationship
-            subnet_ref = (
-                resource.get("subnet_id") or 
-                resource.get("SubnetId") or 
-                resource.get("attributes", {}).get("subnet_id") or 
-                resource.get("attributes", {}).get("SubnetId")
-            )
-            if subnet_ref and isinstance(subnet_ref, str):
-                clean_subnet_ref = subnet_ref.replace('-', '_')
-                edges.append({
-                    "source": node_id,
-                    "target": f"aws_subnet.{clean_subnet_ref}",
-                    "relation": "deployed_in" if res_type == "aws_instance" else "associated_with"
-                })
+            # 2. Map Compute Instances to Subnets and Security Groups
+            elif res_type == "aws_instance":
+                # Subnet deployed relationship
+                subnet_ref = (
+                    resource.get("subnet_id") or 
+                    resource.get("SubnetId") or 
+                    resource.get("attributes", {}).get("subnet_id") or 
+                    resource.get("attributes", {}).get("SubnetId")
+                )
+                if subnet_ref and isinstance(subnet_ref, str):
+                    clean_subnet_ref = subnet_ref.replace('-', '_')
+                    edges.append({
+                        "source": node_id,
+                        "target": f"aws_subnet.{clean_subnet_ref}",
+                        "relation": "deployed_in"
+                    })
 
-            # Security group relationship (e.g. EC2 instance SecurityGroups)
-            sg_list = (
-                resource.get("SecurityGroups") or 
-                resource.get("security_groups") or 
-                resource.get("vpc_security_group_ids") or 
-                resource.get("attributes", {}).get("vpc_security_group_ids") or 
-                resource.get("attributes", {}).get("security_groups") or 
-                []
-            )
-            from config.settings import DEBUG
-            if DEBUG and res_type == "aws_instance":
-                print(f"[DEBUG GRAPH PARSER] Resource: {node_id}")
-                print(f"[DEBUG GRAPH PARSER] Raw dictionary keys: {list(resource.keys())}")
-                print(f"[DEBUG GRAPH PARSER] SG IDs found: {sg_list}")
+                # Security group relationship (e.g. EC2 instance SecurityGroups)
+                sg_list = (
+                    resource.get("SecurityGroups") or 
+                    resource.get("security_groups") or 
+                    resource.get("vpc_security_group_ids") or 
+                    resource.get("attributes", {}).get("vpc_security_group_ids") or 
+                    resource.get("attributes", {}).get("security_groups") or 
+                    []
+                )
+                from config.settings import DEBUG
+                if DEBUG:
+                    print(f"[DEBUG GRAPH PARSER] Resource: {node_id}")
+                    print(f"[DEBUG GRAPH PARSER] Raw dictionary keys: {list(resource.keys())}")
+                    print(f"[DEBUG GRAPH PARSER] SG IDs found: {sg_list}")
 
-            if isinstance(sg_list, str):
-                sg_list = [sg_list]
-            if isinstance(sg_list, list):
-                for sg in sg_list:
-                    sg_id = None
-                    if isinstance(sg, dict):
-                        sg_id = sg.get("GroupId") or sg.get("group_id")
-                    elif isinstance(sg, str):
-                        sg_id = sg
-                    if sg_id and isinstance(sg_id, str):
-                        clean_sg_id = sg_id.replace('-', '_')
-                        relation = "protected_by" if res_type in ["aws_instance", "aws_eks_cluster", "aws_eks_node_group", "aws_autoscaling_group", "aws_launch_template"] else "uses"
-                        edges.append({
-                            "source": node_id,
-                            "target": f"aws_security_group.{clean_sg_id}",
-                            "relation": relation
-                        })
+                if isinstance(sg_list, str):
+                    sg_list = [sg_list]
+                if isinstance(sg_list, list):
+                    for sg in sg_list:
+                        sg_id = None
+                        if isinstance(sg, dict):
+                            sg_id = sg.get("GroupId") or sg.get("group_id")
+                        elif isinstance(sg, str):
+                            sg_id = sg
+                        if sg_id and isinstance(sg_id, str):
+                            clean_sg_id = sg_id.replace('-', '_')
+                            edges.append({
+                                "source": node_id,
+                                "target": f"aws_security_group.{clean_sg_id}",
+                                "relation": "protected_by"
+                            })
 
-            # Launch template relationship
+            # 3. Launch template relationship
             lt_ref = resource.get("launch_template_id") or resource.get("LaunchTemplateId")
-            if lt_ref:
+            if lt_ref and isinstance(lt_ref, str):
                 edges.append({
                     "source": node_id,
                     "target": f"aws_launch_template.{lt_ref}",
                     "relation": "uses_template"
                 })
 
-            # DB Subnet Group and RDS relationships
+            # 4. DB Subnet Group and RDS relationships
             if res_type == "aws_db_subnet_group":
                 subnet_ids = resource.get("subnet_ids") or []
                 for sub_id in subnet_ids:
