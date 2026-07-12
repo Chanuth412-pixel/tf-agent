@@ -466,10 +466,11 @@ def compile_infrastructure_graph(raw_data, mode):
             # Try to grab the first VPC if present, to represent it as a node
             vpc_id = raw_data.get("vpc_id")
             if vpc_id:
-                nodes[f"aws_vpc.{vpc_id}"] = {
+                clean_vpc_id = vpc_id.replace('-', '_')
+                nodes[f"aws_vpc.{clean_vpc_id}"] = {
                     "type": "aws_vpc",
-                    "name": vpc_id,
-                    "display_name": vpc_id
+                    "name": clean_vpc_id,
+                    "display_name": clean_vpc_id
                 }
             resources = raw_data.get("resources", [])
 
@@ -479,7 +480,8 @@ def compile_infrastructure_graph(raw_data, mode):
             if not res_type or not res_id:
                 continue
 
-            node_id = f"{res_type}.{res_id}"
+            clean_res_id = res_id.replace('-', '_')
+            node_id = f"{res_type}.{clean_res_id}"
             tags = resource.get("tags") or {}
             display_name = tags.get("Name") or resource.get("name") or resource.get("bucket") or res_id
             
@@ -499,9 +501,10 @@ def compile_infrastructure_graph(raw_data, mode):
                 resource.get("attributes", {}).get("VpcId")
             )
             if vpc_ref:
+                clean_vpc_ref = vpc_ref.replace('-', '_')
                 edges.append({
                     "source": node_id,
-                    "target": f"aws_vpc.{vpc_ref}",
+                    "target": f"aws_vpc.{clean_vpc_ref}",
                     "relation": "isolated_by" if res_type == "aws_security_group" else "contained_in"
                 })
 
@@ -513,9 +516,10 @@ def compile_infrastructure_graph(raw_data, mode):
                 resource.get("attributes", {}).get("SubnetId")
             )
             if subnet_ref:
+                clean_subnet_ref = subnet_ref.replace('-', '_')
                 edges.append({
                     "source": node_id,
-                    "target": f"aws_subnet.{subnet_ref}",
+                    "target": f"aws_subnet.{clean_subnet_ref}",
                     "relation": "deployed_in" if res_type == "aws_instance" else "associated_with"
                 })
 
@@ -543,10 +547,11 @@ def compile_infrastructure_graph(raw_data, mode):
                 elif isinstance(sg, str):
                     sg_id = sg
                 if sg_id:
+                    clean_sg_id = sg_id.replace('-', '_')
                     relation = "protected_by" if res_type in ["aws_instance", "aws_eks_cluster", "aws_eks_node_group", "aws_autoscaling_group", "aws_launch_template"] else "uses"
                     edges.append({
                         "source": node_id,
-                        "target": f"aws_security_group.{sg_id}",
+                        "target": f"aws_security_group.{clean_sg_id}",
                         "relation": relation
                     })
 
