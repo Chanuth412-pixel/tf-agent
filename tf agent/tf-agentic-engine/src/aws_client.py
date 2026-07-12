@@ -457,6 +457,26 @@ def compile_infrastructure_graph(raw_data, mode):
     nodes = {}
     edges = []
 
+    # Strips HCL reference wrappers (e.g., aws_vpc.my_vpc.id -> my_vpc) to ensure edge IDs match node IDs
+    def safe_id(res_type, raw_id):
+        if not raw_id:
+            return ""
+        clean_name = str(raw_id).split('.id')[0].split('.')[-1]
+        return f"{res_type}.{clean_name.replace('-', '_')}"
+
+    # Searches root level, then checks nested 'attributes' dictionary for Terraform states
+    def get_field(res, primary_key, fallback_key=None):
+        keys = [primary_key]
+        if fallback_key:
+            keys.append(fallback_key)
+        for k in keys:
+            if k in res and res[k]:
+                return res[k]
+            attrs = res.get("attributes", {})
+            if isinstance(attrs, dict) and k in attrs and attrs[k]:
+                return attrs[k]
+        return None
+
     if mode == "import":
         # Raw data is expected to be a list of resource dicts or a dictionary containing 'resources'
         resources = []
@@ -465,120 +485,104 @@ def compile_infrastructure_graph(raw_data, mode):
         elif isinstance(raw_data, dict):
             # Try to grab the first VPC if present, to represent it as a node
             vpc_id = raw_data.get("vpc_id")
-            if vpc_id and isinstance(vpc_id, str):
-                clean_vpc_id = vpc_id.replace('-', '_')
-                nodes[f"aws_vpc.{clean_vpc_id}"] = {
+            if vpc_id:
+                clean_vpc_id = safe_id("aws_vpc", vpc_id)
+                nodes[clean_vpc_id] = {
                     "type": "aws_vpc",
-                    "name": clean_vpc_id,
-                    "display_name": clean_vpc_id
+                    "name": vpc_id.replace('-', '_'),
+                    "display_name": vpc_id.replace('-', '_')
                 }
             resources = raw_data.get("resources", [])
 
-        for resource in resources:
-            res_type = resource.get("type")
-            res_id = resource.get("id")
-            if not res_type or not res_id:
+        # Build nodes
+        for r in resources:
+            r_type = r.get("type")
+            r_id = r.get("id")
+            if not r_type or not r_id:
                 continue
-
-            clean_res_id = str(res_id).replace('-', '_')
-            node_id = f"{res_type}.{clean_res_id}"
-            tags = resource.get("tags") or {}
-            display_name = tags.get("Name") or resource.get("name") or resource.get("bucket") or res_id
-            
-            nodes[node_id] = {
-                "type": res_type,
+            node_key = safe_id(r_type, r_id)
+            display_name = r.get("name") or r.get("bucket") or r_id
+            nodes[node_key] = {
+                "type": r_type,
                 "name": display_name,
                 "display_name": display_name
             }
 
-            # 1. Map Subnets and Security Groups to VPCs
-            if res_type in ["aws_subnet", "aws_security_group"]:
-                vpc_ref = (
-                    resource.get("vpc_id") or 
-                    resource.get("VpcId") or 
-                    resource.get("attributes", {}).get("vpc_id") or 
-                    resource.get("attributes", {}).get("VpcId")
-                )
-                if vpc_ref and isinstance(vpc_ref, str):
-                    clean_vpc_ref = vpc_ref.replace('-', '_')
-                    relation = "isolated_by" if res_type == "aws_security_group" else "contained_in"
+        # Build edges
+        for r in resources:
+            r_type = r.get("type")
+            node_key = safe_id(r_type, r.get("id"))
+            if not node_key:
+                continue
+
+            if r_type == "aws_subnet":
+                v_id = get_field(r, "vpc_id")
+                if v_id:
                     edges.append({
-                        "source": node_id,
-                        "target": f"aws_vpc.{clean_vpc_ref}",
-                        "relation": relation
+                        "source": node_key,
+                        "target": safe_id("aws_vpc", v_id),
+                        "relation": "contained_in"
                     })
 
-            # 2. Map Compute Instances to Subnets and Security Groups
-            elif res_type == "aws_instance":
-                # Subnet deployed relationship
-                subnet_ref = (
-                    resource.get("subnet_id") or 
-                    resource.get("SubnetId") or 
-                    resource.get("attributes", {}).get("subnet_id") or 
-                    resource.get("attributes", {}).get("SubnetId")
-                )
-                if subnet_ref and isinstance(subnet_ref, str):
-                    clean_subnet_ref = subnet_ref.replace('-', '_')
+            elif r_type == "aws_security_group":
+                v_id = get_field(r, "vpc_id")
+                if v_id:
                     edges.append({
-                        "source": node_id,
-                        "target": f"aws_subnet.{clean_subnet_ref}",
+                        "source": node_key,
+                        "target": safe_id("aws_vpc", v_id),
+                        "relation": "isolated_by"
+                    })
+
+            elif r_type == "aws_instance":
+                s_id = get_field(r, "subnet_id")
+                if s_id:
+                    edges.append({
+                        "source": node_key,
+                        "target": safe_id("aws_subnet", s_id),
                         "relation": "deployed_in"
                     })
 
-                # Security group relationship (e.g. EC2 instance SecurityGroups)
-                sg_list = (
-                    resource.get("SecurityGroups") or 
-                    resource.get("security_groups") or 
-                    resource.get("vpc_security_group_ids") or 
-                    resource.get("attributes", {}).get("vpc_security_group_ids") or 
-                    resource.get("attributes", {}).get("security_groups") or 
-                    []
-                )
-                from config.settings import DEBUG
-                if DEBUG:
-                    print(f"[DEBUG GRAPH PARSER] Resource: {node_id}")
-                    print(f"[DEBUG GRAPH PARSER] Raw dictionary keys: {list(resource.keys())}")
-                    print(f"[DEBUG GRAPH PARSER] SG IDs found: {sg_list}")
+                # Fallback to security_groups if vpc_security_group_ids is missing
+                sg_raw = get_field(r, "vpc_security_group_ids", "security_groups")
+                sg_list = []
+                
+                # Parses raw HCL string arrays into Python lists
+                if isinstance(sg_raw, str):
+                    cleaned = re.sub(r'[\[\]\"\'\s]', '', sg_raw)
+                    sg_list = [s for s in cleaned.split(',') if s]
+                elif isinstance(sg_raw, list):
+                    sg_list = sg_raw
 
-                if isinstance(sg_list, str):
-                    sg_list = [sg_list]
-                if isinstance(sg_list, list):
-                    for sg in sg_list:
-                        sg_id = None
-                        if isinstance(sg, dict):
-                            sg_id = sg.get("GroupId") or sg.get("group_id")
-                        elif isinstance(sg, str):
-                            sg_id = sg
-                        if sg_id and isinstance(sg_id, str):
-                            clean_sg_id = sg_id.replace('-', '_')
-                            edges.append({
-                                "source": node_id,
-                                "target": f"aws_security_group.{clean_sg_id}",
-                                "relation": "protected_by"
-                            })
+                for sg in sg_list:
+                    if sg:
+                        edges.append({
+                            "source": node_key,
+                            "target": safe_id("aws_security_group", sg),
+                            "relation": "protected_by"
+                        })
 
-            # 3. Launch template relationship
-            lt_ref = resource.get("launch_template_id") or resource.get("LaunchTemplateId")
+            # Launch template relationship
+            lt_ref = get_field(r, "launch_template_id", "LaunchTemplateId")
             if lt_ref and isinstance(lt_ref, str):
                 edges.append({
-                    "source": node_id,
-                    "target": f"aws_launch_template.{lt_ref}",
+                    "source": node_key,
+                    "target": safe_id("aws_launch_template", lt_ref),
                     "relation": "uses_template"
                 })
 
-            # 4. DB Subnet Group and RDS relationships
-            if res_type == "aws_db_subnet_group":
-                subnet_ids = resource.get("subnet_ids") or []
+            # DB Subnet Group and RDS relationships
+            if r_type == "aws_db_subnet_group":
+                subnet_ids = get_field(r, "subnet_ids") or []
                 for sub_id in subnet_ids:
                     edges.append({
-                        "source": node_id,
-                        "target": f"aws_subnet.{sub_id}",
+                        "source": node_key,
+                        "target": safe_id("aws_subnet", sub_id),
                         "relation": "groups_subnet"
                     })
 
-            if res_type == "aws_db_instance":
-                db_sng = resource.get("db_subnet_group_name") or "default"
-                sng_node_id = f"aws_db_subnet_group.{db_sng}"
+            if r_type == "aws_db_instance":
+                db_sng = get_field(r, "db_subnet_group_name") or "default"
+                sng_node_id = safe_id("aws_db_subnet_group", db_sng)
                 
                 # Dynamic injection of DB subnet group node if not already present
                 if sng_node_id not in nodes:
@@ -589,33 +593,33 @@ def compile_infrastructure_graph(raw_data, mode):
                     }
                 
                 edges.append({
-                    "source": node_id,
+                    "source": node_key,
                     "target": sng_node_id,
                     "relation": "uses_subnet_group"
                 })
 
                 # If we dynamically created the sng node or it has subnet IDs, let's link it to subnets
-                snet_ids = resource.get("subnet_ids") or []
+                snet_ids = get_field(r, "subnet_ids") or []
                 if not snet_ids:
                     # Look up subnets in the list of resources
-                    for r in resources:
-                        if r.get("type") == "aws_subnet":
-                            r_tags = r.get("tags") or {}
-                            r_name = r_tags.get("Name", "").lower()
-                            r_id = r.get("id", "").lower()
+                    for other_r in resources:
+                        if other_r.get("type") == "aws_subnet":
+                            other_tags = other_r.get("tags") or {}
+                            other_name = other_tags.get("Name", "").lower()
+                            other_id = other_r.get("id", "").lower()
                             # Prefer private subnets
-                            if "private" in r_name or "private" in r_id:
-                                snet_ids.append(r.get("id"))
+                            if "private" in other_name or "private" in other_id:
+                                snet_ids.append(other_r.get("id"))
                     # Fallback to all subnets if no private found
                     if not snet_ids:
-                        for r in resources:
-                            if r.get("type") == "aws_subnet":
-                                snet_ids.append(r.get("id"))
+                        for other_r in resources:
+                            if other_r.get("type") == "aws_subnet":
+                                snet_ids.append(other_r.get("id"))
                 
                 # Check existing edges to avoid duplicate groups_subnet edges
                 existing_sng_targets = {e["target"] for e in edges if e["source"] == sng_node_id and e["relation"] == "groups_subnet"}
                 for sub_id in snet_ids:
-                    target_sub = f"aws_subnet.{sub_id}"
+                    target_sub = safe_id("aws_subnet", sub_id)
                     if target_sub not in existing_sng_targets:
                         edges.append({
                             "source": sng_node_id,
