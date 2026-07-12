@@ -508,7 +508,9 @@ def compile_infrastructure_graph(raw_data, mode):
                 })
 
             # Security group relationship (e.g. EC2 instance SecurityGroups)
-            sg_list = resource.get("SecurityGroups") or resource.get("security_groups") or []
+            sg_list = resource.get("SecurityGroups") or resource.get("security_groups") or resource.get("vpc_security_group_ids") or []
+            if isinstance(sg_list, str):
+                sg_list = [sg_list]
             for sg in sg_list:
                 sg_id = None
                 if isinstance(sg, dict):
