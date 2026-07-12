@@ -627,12 +627,10 @@ def compile_infrastructure_graph(raw_data, mode):
                             "relation": "groups_subnet"
                         })
 
-        from config.settings import DEBUG
-        if DEBUG:
-            print(f"\n[DEBUG COMPILER] Total resources scanned: {len(resources)}")
-            print(f"[DEBUG COMPILER] Total edges successfully compiled: {len(edges)}")
-            if len(edges) == 0 and len(resources) > 0:
-                print(f"[DEBUG COMPILER] Dump of first resource: {resources[0]}")
+        print(f"\n[DEBUG COMPILER] Total resources scanned: {len(resources)}")
+        print(f"[DEBUG COMPILER] Total edges successfully compiled: {len(edges)}")
+        if len(edges) == 0 and len(resources) > 0:
+            print(f"[DEBUG COMPILER] Dump of first resource: {resources[0]}")
 
     elif mode == "clone":
         # Raw data is expected to be HCL configuration string
