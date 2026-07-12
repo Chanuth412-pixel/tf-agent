@@ -80,6 +80,10 @@ CRITICAL AWS PROVIDER V5 RULES:
 2. If you need versioning, create a SEPARATE resource: 'aws_s3_bucket_versioning'.
 3. If you need encryption, create a SEPARATE resource: 'aws_s3_bucket_server_side_encryption_configuration'.
 4. NEVER place 'subnet_ids' directly inside an 'aws_db_instance' resource block. When network subnets are provided for a database, always generate a separate 'aws_db_subnet_group' resource and link it to the database instance using the 'db_subnet_group_name' attribute. Never use the name "default" for an aws_db_subnet_group. Always generate a descriptive name based on the environment or database identifier (e.g., "main-db-subnet-group"). When creating an aws_db_subnet_group, you must only populate the subnet_ids array using the exact resource addresses/IDs of aws_subnet resources that already exist in the provided network state. Do not invent new subnet IDs.
+
+CRITICAL DYNAMODB HCL RULES:
+1. NEVER use `key_schema` blocks inside `aws_dynamodb_table`. This is an unsupported block type.
+2. You MUST define primary keys using root-level arguments: `hash_key = "AttributeName"` and `range_key = "AttributeName"`.
 If you violate these rules, the system will crash.
 """
 
@@ -1398,8 +1402,12 @@ def scrub_deprecated_s3_syntax(workspace_dir: str = "terraform_workspace"):
             new_lines.append(line)
             
         # Overwrite the file with the sanitized code
+        sanitized_content = "".join(new_lines)
+        if "key_schema" in sanitized_content:
+            sanitized_content = re.sub(r'key_schema\s*\{\s*(.*?)\s*\}', r'\1', sanitized_content, flags=re.DOTALL)
+            
         with open(filepath, "w", encoding="utf-8") as f:
-            f.writelines(new_lines)
+            f.write(sanitized_content)
 
 
 def filter_aws_input_data(aws_input_data: dict, node_type: str) -> dict:
