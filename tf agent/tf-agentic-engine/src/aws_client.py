@@ -190,6 +190,8 @@ def fetch_live_infrastructure(region_name=None):
                         "image_id": inst.get('ImageId'),  # Grab the exact ImageId of the running instance
                         "instance_type": inst['InstanceType'],
                         "subnet_id": inst.get('SubnetId', 'Unknown'),
+                        "security_groups": [sg['GroupId'] for sg in inst.get('SecurityGroups', [])],
+                        "vpc_security_group_ids": [sg['GroupId'] for sg in inst.get('SecurityGroups', [])],
                         "tags": get_tags_dict(inst.get('Tags', []))
                     })
                 
@@ -526,6 +528,12 @@ def compile_infrastructure_graph(raw_data, mode):
                 resource.get("attributes", {}).get("security_groups") or 
                 []
             )
+            from config.settings import DEBUG
+            if DEBUG and res_type == "aws_instance":
+                print(f"[DEBUG GRAPH PARSER] Resource: {node_id}")
+                print(f"[DEBUG GRAPH PARSER] Raw dictionary keys: {list(resource.keys())}")
+                print(f"[DEBUG GRAPH PARSER] SG IDs found: {sg_list}")
+
             if isinstance(sg_list, str):
                 sg_list = [sg_list]
             for sg in sg_list:
