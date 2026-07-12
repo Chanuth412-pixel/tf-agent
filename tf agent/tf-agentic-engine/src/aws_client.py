@@ -490,7 +490,12 @@ def compile_infrastructure_graph(raw_data, mode):
             # Extract Edges based on explicit structural attachment keys
             
             # VPC container relationship
-            vpc_ref = resource.get("vpc_id") or resource.get("VpcId")
+            vpc_ref = (
+                resource.get("vpc_id") or 
+                resource.get("VpcId") or 
+                resource.get("attributes", {}).get("vpc_id") or 
+                resource.get("attributes", {}).get("VpcId")
+            )
             if vpc_ref:
                 edges.append({
                     "source": node_id,
@@ -499,7 +504,12 @@ def compile_infrastructure_graph(raw_data, mode):
                 })
 
             # Subnet deployed relationship
-            subnet_ref = resource.get("subnet_id") or resource.get("SubnetId")
+            subnet_ref = (
+                resource.get("subnet_id") or 
+                resource.get("SubnetId") or 
+                resource.get("attributes", {}).get("subnet_id") or 
+                resource.get("attributes", {}).get("SubnetId")
+            )
             if subnet_ref:
                 edges.append({
                     "source": node_id,
@@ -508,7 +518,14 @@ def compile_infrastructure_graph(raw_data, mode):
                 })
 
             # Security group relationship (e.g. EC2 instance SecurityGroups)
-            sg_list = resource.get("SecurityGroups") or resource.get("security_groups") or resource.get("vpc_security_group_ids") or []
+            sg_list = (
+                resource.get("SecurityGroups") or 
+                resource.get("security_groups") or 
+                resource.get("vpc_security_group_ids") or 
+                resource.get("attributes", {}).get("vpc_security_group_ids") or 
+                resource.get("attributes", {}).get("security_groups") or 
+                []
+            )
             if isinstance(sg_list, str):
                 sg_list = [sg_list]
             for sg in sg_list:
