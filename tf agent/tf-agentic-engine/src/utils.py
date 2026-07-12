@@ -1417,6 +1417,12 @@ def scrub_deprecated_s3_syntax(workspace_dir: str = "terraform_workspace"):
         if "key_schema" in sanitized_content:
             sanitized_content = re.sub(r'key_schema\s*\{\s*(.*?)\s*\}', r'\1', sanitized_content, flags=re.DOTALL)
             
+        if filename == "security.tf" or "ingress" in sanitized_content or "egress" in sanitized_content:
+            # Step 1: Strip the assignment operator and opening bracket from ingress/egress rules
+            sanitized_content = re.sub(r'(ingress|egress)\s*=\s*\[', r'\1', sanitized_content)
+            # Step 2: Strip any trailing closing brackets that exist on their own line
+            sanitized_content = re.sub(r'^\s*\]\s*$', '', sanitized_content, flags=re.MULTILINE)
+
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(sanitized_content)
 
