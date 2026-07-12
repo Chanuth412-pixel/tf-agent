@@ -51,14 +51,14 @@ CRITICAL SYNTAX RULES:
 4. Avoid duplicating security group names between runs; use fixed resource addressing.
 
 CRITICAL SECURITY GROUP HCL RULES:
-1. NEVER use the list assignment syntax (`ingress = [{...}]` or `egress = [{...}]`) for security group rules.
+1. NEVER use the list assignment syntax (`ingress = [{{...}}]` or `egress = [{{...}}]`) for security group rules.
 2. You MUST use the block syntax without the equals sign or brackets: 
-   ingress {
+   ingress {{
      from_port   = 80
      to_port     = 80
      protocol    = "tcp"
      cidr_blocks = ["0.0.0.0/0"]
-   }
+   }}
 3. Do not include optional attributes like `ipv6_cidr_blocks`, `prefix_list_ids`, or `security_groups` unless they are explicitly provided in the source data.
 """
 
