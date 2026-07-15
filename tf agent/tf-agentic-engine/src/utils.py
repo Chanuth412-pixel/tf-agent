@@ -60,6 +60,35 @@ CRITICAL SECURITY GROUP HCL RULES:
      cidr_blocks = ["0.0.0.0/0"]
    }}
 3. Do not include optional attributes like `ipv6_cidr_blocks`, `prefix_list_ids`, or `security_groups` unless they are explicitly provided in the source data.
+
+CRITICAL TERRAFORM SYNTAX ENFORCEMENT:
+When generating aws_security_group resources, you MUST use standard HCL block syntax for rules.
+DO NOT use JSON arrays, and DO NOT leave trailing brackets like 'ingress]'.
+Ensure the 'tags' block is placed INSIDE the main resource block before the final closing brace.
+
+CORRECT FORMAT:
+resource "aws_security_group" "example" {{
+  description = "Example SG"
+  vpc_id      = "vpc-12345"
+
+  ingress {{
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }}
+
+  egress {{
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }}
+
+  tags = {{
+    Name = "example_sg"
+  }}
+}}
 """
 
 COMPUTE_PROMPT = f"""

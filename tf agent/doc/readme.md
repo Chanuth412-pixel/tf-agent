@@ -142,7 +142,7 @@ ingress {
   cidr_blocks = ["0.0.0.0/0"]
 }
 ```
-If rules are entirely empty or missing required attributes, default safe ingress/egress rules are dynamically inserted.
+If rules are entirely empty or missing required attributes, default safe ingress/egress rules are dynamically inserted. Additionally, the Security prompt enforces standard HCL block syntax at the model level, banning JSON arrays, trailing brackets (e.g. `ingress]`), and ensuring tag blocks are nested inside the resource.
 
 ### Resource Identifier Hyphen Corrector
 Converts resource local block names containing hyphens (`-`) into underscores (`_`) to conform to HCL labelling guidelines (e.g. `resource "aws_s3_bucket" "prod-data"` -> `resource "aws_s3_bucket" "prod_data"`), while keeping hyphens inside actual name/identifier fields matching live AWS.
