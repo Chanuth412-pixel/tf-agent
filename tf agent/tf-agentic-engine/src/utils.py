@@ -112,7 +112,18 @@ CRITICAL CONSTRAINT: Return ONLY valid, raw HCL structural syntax code blocks. D
   1. `vpc_zone_identifier` MUST be a list/set of strings (e.g., `["subnet-123"]`, not `"subnet-123"`).
   2. STRICTLY FORBIDDEN: You are strictly forbidden from writing a `tags` (e.g. `tags = [...]`) or `tags_all` attribute block inside `aws_autoscaling_group`. You MUST define every tag using a separate `tag {{ key = "..." value = "..." propagate_at_launch = true }}` block.
   3. You MUST always specify one of `launch_configuration`, `launch_template`, or `mixed_instances_policy` (e.g., `launch_template {{ id = "..." }}`). If none is specified in the telemetry, reference a placeholder launch template block.
-- For `aws_dynamodb_table`: You MUST set `billing_mode = "PAY_PER_REQUEST"`. You are strictly FORBIDDEN from specifying `read_capacity_units` or `write_capacity_units`.
+- For `aws_dynamodb_table`: You MUST set `billing_mode = "PAY_PER_REQUEST"`. You are strictly FORBIDDEN from specifying `read_capacity_units` or `write_capacity_units`. You MUST define attributes using nested `attribute` blocks (e.g., `attribute { name = "UserId" type = "S" }`). You are strictly FORBIDDEN from using root-level 'attribute_name' or 'key_type' arguments.
+  Example:
+  resource "aws_dynamodb_table" "example" {
+    name         = "example_table"
+    billing_mode = "PAY_PER_REQUEST"
+    hash_key     = "UserId"
+
+    attribute {
+      name = "UserId"
+      type = "S"
+    }
+  }
 - For `aws_iam_role`: You MUST always specify the required **`assume_role_policy`** argument. If the exact policy document is not provided in the AWS telemetry, default to a standard EC2 service assume-role policy trust document via `jsonencode`.
 - For Terraform 1.5+ `import` blocks: You MUST always specify the `to` and `id` arguments. The argument `id` is REQUIRED and must be named exactly `id` (e.g., `id = "..."`). You are strictly FORBIDDEN from using `name = "..."` or any other argument name in place of `id`.
   CRITICAL: All `import` blocks MUST be top-level blocks outside and separate from any resource blocks. You are strictly FORBIDDEN from nesting `import` blocks inside a resource block body.
@@ -566,6 +577,18 @@ def post_process_hcl_compliance(workspace_dir: str) -> None:
             
         modified = False
         new_content = content
+
+        # Fix: Strip quotes from the 'to' argument in import blocks
+        # Converts: to = "aws_instance.my_ec2" -> to = aws_instance.my_ec2
+        cleaned_content = re.sub(r'\bto\s*=\s*"([^"]+)"', r'to = \1', new_content)
+        
+        # Fix: Strip completely invalid DynamoDB 'attribute_name' and 'key_type' root arguments
+        cleaned_content = re.sub(r'^\s*attribute_name\s*=.*$\n', '', cleaned_content, flags=re.MULTILINE)
+        cleaned_content = re.sub(r'^\s*key_type\s*=.*$\n', '', cleaned_content, flags=re.MULTILINE)
+        
+        if cleaned_content != new_content:
+            new_content = cleaned_content
+            modified = True
         
         # Nuclear Option: Aggressively remove unrequested/hallucinated internet gateways and route tables
         current_dir = os.path.dirname(os.path.abspath(__file__))

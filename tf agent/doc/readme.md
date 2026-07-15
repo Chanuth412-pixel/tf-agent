@@ -25,12 +25,13 @@ graph TD
 ```
 
 ### Directory Structure & Layout
-* **[main.py](file:///d:/proj_1/upwork/tf%20agent/tf-agentic-engine/main.py)**: Orchestrator entry point. Initializes settings, manages conditional environment scanning, and boots up the LangGraph execution.
+* **[main.py](file:///d:/proj_1/upwork/tf%20agent/tf-agentic-engine/main.py)**: Orchestrator entry point. Initializes settings, manages conditional environment scanning (local mock vs. live AWS), and boots up the LangGraph execution.
 * **[src/agent.py](file:///d:/proj_1/upwork/tf%20agent/tf-agentic-engine/src/agent.py)**: Configures the state graph (`StateGraph`), registers functional nodes, maps linear transitions, and defines conditional edge routing.
 * **[src/state.py](file:///d:/proj_1/upwork/tf%20agent/tf-agentic-engine/src/state.py)**: Defines the structured `GraphState` typed dictionary representing the system's runtime memory.
-* **[src/nodes.py](file:///d:/proj_1/upwork/tf%20agent/tf-agentic-engine/src/nodes.py)**: Core generators (`generate_network_node`, `generate_security_node`, `generate_compute_node`, `generate_data_node`) and validation managers.
-* **[src/utils.py](file:///d:/proj_1/upwork/tf%20agent/tf-agentic-engine/src/utils.py)**: Contains LLM connection wrappers, token parsing regexes, HCL compliant formatters/scrubbers, and structural graph rendering functions.
+* **[src/nodes.py](file:///d:/proj_1/upwork/tf%20agent/tf-agentic-engine/src/nodes.py)**: Core generators (`generate_network_node`, `generate_security_node`, `generate_compute_node`, `generate_data_node`) and validation/routing nodes.
+* **[src/utils.py](file:///d:/proj_1/upwork/tf%20agent/tf-agentic-engine/src/utils.py)**: Contains LLM connection wrappers, token parsing regexes, HCL compliant formatters/scrubbers, post-processing correctors, and structural graph rendering functions.
 * **[config/settings.py](file:///d:/proj_1/upwork/tf%20agent/tf-agentic-engine/config/settings.py)**: Holds configuration values such as model tags, context sizes, and retry counts.
+* **[scanner/discovery.py](file:///d:/proj_1/upwork/tf%20agent/tf-agentic-engine/scanner/discovery.py)**: Discovers or mock-simulates configurations.
 
 ---
 
@@ -41,7 +42,7 @@ The workflow communicates via a centralized dictionary structure called `GraphSt
 ```python
 class InfrastructureGraph(TypedDict):
     nodes: Dict[str, Any]       # Key: Resource ID (e.g., 'aws_vpc.main'), Value: Attributes
-    edges: List[Dict[str, Any]] # Key: list containing 'source', 'target', and dependency 'relation' type
+    edges: List[Dict[str, Any]] # List containing 'source', 'target', and dependency 'relation' type
 
 class GraphState(TypedDict):
     deployment_mode: str        # Mode constraint: "new", "import", "clone"
@@ -93,11 +94,12 @@ Generates `data.tf`. Manages database services (RDS, DynamoDB) and storage optio
 * **Constraints**: Ensures relational databases are tied to DB Subnet Groups mapping back to private subnets.
 
 ### 5. `validate_code` ([validation_node_func](file:///d:/proj_1/upwork/tf%20agent/tf-agentic-engine/src/nodes.py#L837))
-Runs a local check against the generated HCL code inside the `terraform_workspace/` directory:
+Runs local verification checks against the generated HCL code inside the `terraform_workspace/` directory:
 1. Generates a local mock provider block (`provider.tf`) overriding API credentials checks.
-2. Executes a subprocess command: `terraform validate -json`.
-3. If errors are found, parses and normalizes the compiler output.
-4. Updates `validation_results` in the `GraphState` and increments `retry_count`.
+2. Executes subprocess commands `terraform fmt` and `terraform init -backend=false`.
+3. Runs a deep semantic validation check: `terraform validate -json`.
+4. If errors are found, parses and normalizes the compiler output.
+5. Updates `validation_results` in the `GraphState` and increments `retry_count`.
 
 ---
 
@@ -119,8 +121,11 @@ If the LLM inserts `subnet_ids` directly inside an `aws_db_instance` block (a co
 2. Dynamically generates an `aws_db_subnet_group` resource linking the specified subnets.
 3. Points the `aws_db_instance` to the newly generated group using `db_subnet_group_name`.
 
+### Autoscaling Group Tag Corrector
+Terraform's `aws_autoscaling_group` does not accept raw `tags = [...]` or `tags_all = ...` attributes. The compliance engine parses ASG blocks, extracts any mapped tag structures, and converts them to individual `tag { key = "...", value = "...", propagate_at_launch = true }` sub-blocks.
+
 ### Security Group Ingress/Egress Block Corrector
-Secures block assignments by fixing standard syntax errors. For example, it converts bracketed lists to explicit repeating blocks:
+Secures block assignments by fixing standard syntax errors. It converts bracketed list mappings `ingress = [{...}]` to explicit repeating blocks:
 ```terraform
 # Hallucinated list structure (Invalid)
 ingress = [{
@@ -137,6 +142,21 @@ ingress {
   cidr_blocks = ["0.0.0.0/0"]
 }
 ```
+If rules are entirely empty or missing required attributes, default safe ingress/egress rules are dynamically inserted.
+
+### Resource Identifier Hyphen Corrector
+Converts resource local block names containing hyphens (`-`) into underscores (`_`) to conform to HCL labelling guidelines (e.g. `resource "aws_s3_bucket" "prod-data"` -> `resource "aws_s3_bucket" "prod_data"`), while keeping hyphens inside actual name/identifier fields matching live AWS.
+
+### Import Block Syntax Scrubber
+Dynamically strips double quotes from target identifiers in the `to` argument of `import` blocks (e.g., converting `to = "aws_instance.my_ec2"` to `to = aws_instance.my_ec2`), enforcing Terraform's requirement for static, unquoted resource references.
+
+### DynamoDB Root Argument Scrubber
+Intercepts and automatically removes invalid, hallucinated root-level arguments like `attribute_name` and `key_type` from generated DynamoDB table resources to prevent compiler crashes.
+
+
+### Variable Consolidation & Resource Deduplication
+* **`consolidate_terraform_variables`**: Aggressively scans all phase files, extracts variable definitions via brace matching, deduplicates them, and writes them cleanly to a centralized `variables.tf` while deleting them from the source files.
+* **`deduplicate_resources`**: Scans files in execution dependency order (`network` -> `security` -> `compute` -> `data`) and filters out any duplicate resource definitions of the same type and local name.
 
 ### Token Template Shielding
 To prevent template rendering exceptions in LangChain when passing raw error logs containing JSON brackets (`{}`), the orchestrator runs:
@@ -147,7 +167,7 @@ This protects the prompt template compilers from throwing formatting errors.
 
 ---
 
-## 6. Telemetry Scanning
+## 6. Telemetry Ingestion
 
 The system ingests environment telemetry through two core discovery vectors defined in `aws_client.py`:
 
