@@ -169,6 +169,25 @@ CRITICAL CONSTRAINT: Return ONLY valid, raw HCL structural syntax code blocks. D
     }
   }
 - For resource local names (the block identifier after the resource type, e.g. `resource "aws_s3_bucket" "local_name"`): You MUST replace any hyphens (`-`) in the AWS resource name with underscores (`_`) (e.g. use `tf_engine_state_table` instead of `tf-engine-state-table` for the block identifier). However, the actual resource argument fields (like `name = "..."`, `bucket = "..."`, and `id = "..."` inside the `import` block) MUST keep their original hyphens to match AWS exactly.
+
+  CRITICAL TERRAFORM NAMING CONVENTION FOR IMPORT MODE:
+  Terraform logical resource identifiers MUST begin with a letter or an underscore. They cannot begin with a number.
+  If an AWS resource ID (like an S3 bucket name) begins with a number, you MUST prepend a string (such as 's3_') to the logical name in BOTH the resource block AND the import block. 
+  The actual AWS 'id' in the import block must remain unchanged.
+
+  INCORRECT:
+  import {
+    to = aws_s3_bucket.12345_my_bucket
+    id = "12345_my_bucket"
+  }
+  resource "aws_s3_bucket" "12345_my_bucket" { ... }
+
+  CORRECT:
+  import {
+    to = aws_s3_bucket.s3_12345_my_bucket
+    id = "12345_my_bucket"
+  }
+  resource "aws_s3_bucket" "s3_12345_my_bucket" { ... }
 - Do NOT add a `description` argument to resources unless it is explicitly supported by that resource type (e.g. `aws_security_group` supports it, but `aws_autoscaling_group` and `aws_subnet` do NOT).
 - For `aws_db_instance`: NEVER place the `subnet_ids` argument directly inside the resource block. You are strictly FORBIDDEN from putting a list of subnet IDs inside `aws_db_instance`. Instead, you MUST create a separate `aws_db_subnet_group` resource specifying those subnets in its `subnet_ids` field, and link the `aws_db_instance` to the subnet group by setting `db_subnet_group_name = aws_db_subnet_group.<name>.name`.
 ========================================================================
