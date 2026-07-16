@@ -927,10 +927,43 @@ def post_process_hcl_compliance(workspace_dir: str) -> None:
                 print(f"Error writing corrected file {tf_file}: {e}")
 
 
+def fix_numeric_tf_names(workspace_path="terraform_workspace"):
+    """
+    Scans all generated .tf files and prefixes logical resource names 
+    that start with a number with 'id_' to satisfy Terraform HCL requirements.
+    """
+    if not os.path.exists(workspace_path):
+        return
+    for filename in os.listdir(workspace_path):
+        if not filename.endswith(".tf"):
+            continue
+            
+        filepath = os.path.join(workspace_path, filename)
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            # Fix 1: Resource block definitions
+            # Matches: resource "aws_s3_bucket" "5261..." -> "id_5261..."
+            content = re.sub(r'(resource\s+"[^"]+"\s+")(\d)', r'\g<1>id_\g<2>', content)
+
+            # Fix 2: Downstream references and import blocks
+            # Matches: aws_s3_bucket.5261... -> aws_s3_bucket.id_5261...
+            content = re.sub(r'(aws_[a-zA-Z0-9_]+\.)(\d)', r'\g<1>id_\g<2>', content)
+
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(content)
+        except Exception as e:
+            print(f"Error scrubbing numeric names in {filepath}: {e}")
+
+
 def execute_terraform_validation(workspace_dir: str = "terraform_workspace") -> dict:
     """
     Runs offline AST syntax formatting, then local semantic validation.
     """
+    # Programmatic fix for numeric Terraform names before validation
+    fix_numeric_tf_names(workspace_dir)
+
     # 1. Format the HCL (AST Syntax Check)
     try:
         fmt_result = subprocess.run(
