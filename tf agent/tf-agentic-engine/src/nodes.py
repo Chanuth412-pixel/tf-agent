@@ -51,6 +51,277 @@ def routing_decision_router(state: GraphState) -> str:
     return "fix_network"
 
 
+def generate_data_node(state: GraphState) -> dict:
+    print("[Node] Generating Data Configuration...")
+    from src.vector_db import LocalVectorDB
+    vector_db = LocalVectorDB()
+
+    aws_input = filter_aws_input_data(state.get("aws_input_data", {}), "data")
+
+    if "data.tf" in state.get("failing_files", []):
+        print("[Node] data.tf has compilation errors. Intercepting with Reflection Prompt.")
+        previous_hcl = state.get("data_hcl", "")
+        shielded_errors = state.get("validation_results", "").replace("{", "{{").replace("}", "}}")
+        
+        # Build RAG context from the requested resource types for the correction pass
+        rag_segments = []
+        for r in aws_input.get("resources", []):
+            r_type = r.get("type", "")
+            tmpl = vector_db.query(r_type)
+            if tmpl:
+                rag_segments.append(f"Resource type {r_type} schema:\n{tmpl}")
+        rag_context = "\n\n".join(rag_segments)
+        if rag_context:
+            rag_context = f"\nCRITICAL: You must model your block layout explicitly against these schema templates. The parameters listed inside are the only valid arguments allowed by the provider compiler:\n{rag_context}\n"
+        
+        prompt = f"""
+        [CRITICAL SYSTEM DIRECTIVE: COMPILER CORRECTION]
+        You are an expert Terraform engineer. Your previous generation for `data.tf` failed local compiler validation. 
+        
+        {rag_context}
+        
+        Original Generated Code:
+        ```terraform
+        {previous_hcl}
+        ```
+        
+        Compiler Diagnostics:
+        ```json
+        {shielded_errors}
+        ```
+        
+        INSTRUCTIONS:
+        1. Identify the specific block causing the error in the diagnostics.
+        2. Rewrite the entire file, correcting ONLY the invalid properties or hallucinated arguments.
+        3. Maintain all existing valid resources, connections, and output variables exactly as they were. Do NOT invent new resources.
+        """
+        hcl = call_cloud_llm(
+            prompt,
+            {
+                "aws_input_data": state.get("aws_input_data", {}),
+                "user_prompt": state.get("user_prompt", ""),
+            },
+        )
+        hcl = clean_hcl_output(hcl)
+        parse_and_write_files(hcl, phase_filename="data.tf")
+        return {"data_hcl": hcl, "current_phase": "data"}
+
+    mode = state.get("deployment_mode")
+
+    if mode == "import":
+        resources = aws_input.get("resources", [])
+        has_data = any(r.get("type") in ["aws_s3_bucket", "aws_db_instance", "aws_dynamodb_table", "aws_sqs_queue", "aws_lambda_function", "aws_lambda_event_source_mapping"] for r in resources)
+        if not has_data:
+            print("[Node] No data resources found in AWS input data. Bypassing LLM.")
+            hcl = "# No data resources required."
+            parse_and_write_files(hcl, phase_filename="data.tf")
+            return {"data_hcl": hcl, "current_phase": "data"}
+
+    mode_instructions = ""
+    if mode == "new":
+        mode_instructions = f"""
+        MODE: NEW INFRASTRUCTURE
+        You are the DATA generation node.
+        ONLY generate data-specific resources (RDS instances, DB subnet groups, S3 buckets, DynamoDB, etc.).
+                Do NOT generate network, compute, or security resources.
+                Build the requested data architecture from scratch using standard Terraform cross-references and explicitly define any required `variable` blocks for tunables.
+ 
+                If the user prompt does not require data resources, output exactly: # No data resources required.
+ 
+                User Request: {state.get('user_prompt')}
+        """
+    elif mode == "import":
+                mode_instructions = """
+                MODE: IMPORT EXISTING INFRASTRUCTURE
+                You are the DATA generation node.
+                Read the provided AWS input data. ONLY generate data-specific resources (RDS instances, DB subnet groups, S3 buckets, DynamoDB) that match the input EXACTLY.
+                NEVER use `var.*` references. EXAMPLE WRONG: image_id = var.ami_id  EXAMPLE RIGHT: image_id = "ami-0c55b159cbfafe1f0"
+                EXAMPLE WRONG: instance_type = var.instance_type  EXAMPLE RIGHT: instance_type = "t3.micro"
+                EXAMPLE WRONG: Environment = var.environment  EXAMPLE RIGHT: Environment = "production"
+                ONLY use the exact hardcoded AWS IDs provided in the input JSON data. IF an ID is missing, use a placeholder string.
+                Additionally, you MUST generate Terraform 1.5+ `import` blocks for every resource so Terraform can adopt them.
+                CRITICAL IMPORT BLOCK RULES:
+                For every resource generated, you MUST output a corresponding 'import' block.
+                You must extract the correct identifying string from the input JSON based on this strict mapping matrix:
+ 
+                1. aws_vpc -> Use the 'VpcId' (e.g., vpc-12345)
+                2. aws_subnet -> Use the 'SubnetId' (e.g., subnet-67890)
+                3. aws_security_group -> Use the 'GroupId' (e.g., sg-11111)
+                4. aws_instance -> Use the 'InstanceId' (e.g., i-22222)
+                5. aws_db_instance -> Use the DB 'DBInstanceIdentifier' name, NOT the ARN.
+                6. aws_db_subnet_group -> Use the 'DBSubnetGroupName' string.
+ 
+                Format the import block exactly like this at the top of the file:
+                import {
+                  to = resource_type.local_name
+                  id = "EXACT_MAPPED_STRING"
+                }
+                If the aws_input_data contains no data resources, output exactly: # No data resources required.
+                """
+    elif mode == "clone":
+                mode_instructions = """
+                MODE: CLONE INFRASTRUCTURE
+                You are the DATA generation node.
+                Read the provided AWS input data to understand the architecture. ONLY generate data-specific resources.
+                Replace hardcoded IDs from the JSON with `var.*` references and include corresponding `variable` declaration blocks for every variable you create. Parameterize values using variables so this architecture can be deployed as a brand new copy in a different region.
+                If the aws_input_data contains no data resources, output exactly: # No data resources required.
+                """
+
+    compute_data_constraints = """
+    CONSTRAINT 1: You are strictly responsible for Compute and Data resources. NEVER generate `import` or `resource` blocks for VPCs, Subnets, or IAM roles. If your resources require an IAM role or VPC reference, use the raw ARN/ID string provided in the JSON, or reference the outputs from the injected {security_context} and {network_context}.
+ 
+    CONSTRAINT 2: Terraform resource labels must start with a letter. If the extracted AWS resource ID begins with a number (e.g., a UUID like 3a327099...), you MUST prepend a string like `mapping_` or `res_` to the local resource name (e.g., `resource "aws_lambda_event_source_mapping" "mapping_3a327099..."`).
+ 
+    CONSTRAINT 4 (Naming): Always use underscores instead of hyphens for Terraform resource names. (e.g., use `aws_sqs_queue.task_queue`, NEVER `aws_sqs_queue.task-queue`).
+    CONSTRAINT 5 (Imports): In an `import` block, the `to` attribute must only contain the resource type and name. NEVER prepend it with `resource.`. (e.g., use `to = aws_sqs_queue.main`, NEVER `to = resource.aws_sqs_queue.main`).
+    
+    CRITICAL ARCHITECTURAL CONSTRAINT:
+    You must process EVERY resource provided in the routed payload. 
+    If the payload contains multiple independent VPCs or environments (e.g., prod and staging), you must generate separate infrastructure trees for EACH environment. 
+    Do NOT drop environments. Do NOT synthesize unrequested auxiliary resources like extra subnets or internet gateways unless they are explicitly present in the input JSON data.
+ 
+    CRITICAL FEW-SHOT EXAMPLE:
+    You must map the exact 'id' from the JSON to the Terraform resource name. You must write a separate block for every single item in the list. Do not add anything else.
+ 
+    If the JSON is:
+    [
+      {"type": "aws_vpc", "id": "vpc-core-prod", "cidr_block": "10.10.0.0/16"},
+      {"type": "aws_vpc", "id": "vpc-core-staging", "cidr_block": "10.20.0.0/16"}
+    ]
+ 
+    Your output MUST BE exactly:
+    resource "aws_vpc" "vpc_core_prod" {
+      cidr_block = "10.10.0.0/16"
+      tags = {
+        Name = "vpc-core-prod"
+      }
+    }
+ 
+    resource "aws_vpc" "vpc_core_staging" {
+      cidr_block = "10.20.0.0/16"
+      tags = {
+        Name = "vpc-core-staging"
+      }
+    }
+ 
+    CRITICAL INSTRUCTION: You are currently failing to map the staging resources. 
+    You MUST output a terraform resource block for:
+    - vpc-core-prod AND vpc-core-staging
+    - subnet-web-prod AND subnet-web-staging
+    - server-web-prod AND server-web-staging
+ 
+    If you output 'prod' without also outputting 'staging', your execution will be terminated. Do not summarize. Output the exact blocks.
+    """
+    prompt = mode_instructions + "\n" + compute_data_constraints + "\n" + DATA_PROMPT
+
+    if mode == "new":
+        prompt_user = state.get("user_prompt") + "\n\nABSOLUTE MANDATE FOR NEW MODE:\n1. NO VARIABLES ALLOWED: You are strictly FORBIDDEN from using ANY var.* references. You MUST hardcode ALL values. Hardcode cidr_blocks (e.g., '10.0.0.0/16') and tags (e.g., Environment = 'production').\n2. DEPENDENCIES & NAMING: You must strictly align resource names across files. The Network node MUST declare the VPC as 'resource \"aws_vpc\" \"main\"'. The Security node MUST declare the security group as 'resource \"aws_security_group\" \"main\"'. All cross-references must use 'aws_vpc.main.id' and 'aws_security_group.main.id'.\n3. BLOCK SYNTAX: Never use equals signs for repeatable configuration sub-blocks. Use 'attribute { ... }' instead of 'attribute = [ ... ]', and 'ingress { ... }' instead of 'ingress = [ ... ]'.\n4. DYNAMODB SYNTAX: If you generate an aws_dynamodb_table, you must define the 'hash_key'. You MUST set 'billing_mode = \"PAY_PER_REQUEST\"'. Do NOT specify 'read_capacity_units' or 'write_capacity_units'.\n5. AWS_EIP SYNTAX: For aws_eip, you MUST ONLY use 'domain = \"vpc\"'. Completely remove 'vpc = true'."
+    elif mode == "import":
+        prompt_user = (
+            "ABSOLUTE MANDATE FOR IMPORT MODE:\n"
+            "1. SCOPE: ONLY generate resources explicitly listed in aws_input_data. If the JSON only has an S3 bucket, generate ONLY an aws_s3_bucket. DO NOT generate aws_db_instance or aws_autoscaling_group unless they are in the JSON.\n"
+            "2. NO REFERENCES: NEVER use Terraform cross-references. WRONG: subnet_id = aws_subnet.sub-123.id. RIGHT: subnet_id = \"subnet-123\". MUST use string literals with quotes.\n"
+            "3. NO VARIABLES: NEVER use var.* syntax. WRONG: username = var.user. RIGHT: username = \"admin\". Hardcode all values.\n"
+            "4. DYNAMODB: If you generate an aws_dynamodb_table, you MUST set billing_mode = \"PAY_PER_REQUEST\" and you are strictly FORBIDDEN from specifying read_capacity_units or write_capacity_units.\n"
+            "5. NO DEFAULT TAGS: Do NOT add any default tags (like Environment, Owner, ManagedBy) if they are not explicitly present in the input JSON tags. ONLY copy the exact tags provided in the JSON telemetry. If the telemetry tags are empty, do NOT output a tags block at all.\n"
+            "6. CRITICAL IMPORT BLOCK RULES:\n"
+            "   For every resource generated, you MUST output a corresponding 'import' block.\n"
+            "   You must extract the correct identifying string from the input JSON based on this strict mapping matrix:\n"
+            "   1. aws_vpc -> Use the 'VpcId' (e.g., vpc-12345)\n"
+            "   2. aws_subnet -> Use the 'SubnetId' (e.g., subnet-67890)\n"
+            "   3. aws_security_group -> Use the 'GroupId' (e.g., sg-11111)\n"
+            "   4. aws_instance -> Use the 'InstanceId' (e.g., i-22222)\n"
+            "   5. aws_db_instance -> Use the DB 'DBInstanceIdentifier' name, NOT the ARN.\n"
+            "   6. aws_db_subnet_group -> Use the 'DBSubnetGroupName' string.\n\n"
+            "   Format the import block exactly like this at the top of the file:\n"
+            "   import {\n"
+            "     to = resource_type.local_name\n"
+            "     id = \"EXACT_MAPPED_STRING\"\n"
+            "   }"
+        )
+    else:  # clone
+        prompt_user = "ABSOLUTE MANDATE FOR CLONE MODE:\n1. PARAMETERIZATION: Replace hardcoded IDs and names from the aws_input_data JSON with var.* references.\n2. VARIABLE DECLARATION: You MUST explicitly output a 'variable \"...\" { default = \"...\" }' block with the original scanned value from the telemetry set as the default, for EVERY var.* reference you generate. Write these variable blocks AT THE VERY TOP of your output, inside the exact same HCL block as your resources. DO NOT omit them thinking they belong in a separate variables.tf file. YOU MUST WRITE THEM HERE.\nEXAMPLE REQUIRED OUTPUT:\nvariable \"s3_bucket_name\" { default = \"my-scanned-bucket\" }\nresource \"aws_s3_bucket\" \"main\" { bucket = var.s3_bucket_name }\n\n3. SYNTAX: Do NOT generate 'aws_vpc_gateway_attachment' resources. Associate Internet Gateways directly by setting the 'vpc_id' argument inside the 'aws_internet_gateway' block.\n4. DOMAIN RESTRICTION: You are the DATA node. You MUST ONLY generate data/storage resources (aws_s3_bucket, RDS). Completely IGNORE any subnets, instances, or security groups in the JSON. NEVER generate aws_subnet or aws_security_group.\n5. S3 & DYNAMODB CONFIG: When generating an aws_s3_bucket, if the telemetry contains 'versioning' settings, you are strictly FORBIDDEN from nesting a versioning block inside aws_s3_bucket. Instead, you MUST generate a separate, dedicated aws_s3_bucket_versioning resource block (e.g., resource \"aws_s3_bucket_versioning\" \"...\" { bucket = aws_s3_bucket.main.id ... }). If the telemetry contains 'server_side_encryption' settings, map them using nested blocks (e.g. `server_side_encryption_configuration`). When generating an aws_dynamodb_table, you MUST inspect the 'attribute_definitions' and 'hash_key'/'range_key' lists in the telemetry and define the 'attribute' block and keys matching them exactly.\n6. TAG DEFAULT VALUE FIDELITY: When parameterizing the 'Environment' or 'Owner' tags, set their default values to sensible production settings (e.g. environment = \"production\", owner = \"LangGraph-Agent\") rather than empty strings, if they are empty in the AWS telemetry.\n7. DATABASE SYNTAX: Never place subnet_ids directly inside an aws_db_instance. When network subnets are provided for a database, always generate a separate aws_db_subnet_group resource and link it to the aws_db_instance using the db_subnet_group_name attribute. Never use the name \"default\" for an aws_db_subnet_group. Always generate a descriptive name based on the environment or database identifier (e.g., \"main-db-subnet-group\"). When creating an aws_db_subnet_group, you must only populate the subnet_ids array using the exact resource addresses/IDs of aws_subnet resources that already exist in the provided network state. Do not invent new subnet IDs."
+
+    val_errors = state.get("validation_results", "").replace("{", "{{").replace("}", "}}")
+    if val_errors:
+        prompt = val_errors + "\n" + prompt
+
+    resources = aws_input.get("resources", [])
+    if not resources:
+        hcl = "# No data resources required."
+    else:
+        hcl_blocks = []
+        for resource in resources:
+            r_id = resource.get('id') or resource.get('name') or "unnamed"
+            r_type = resource.get('type') or "unknown"
+            if DEBUG:
+                print(f"[DEBUG] Sending resource to LLM: {r_id} | Type: {r_type}")
+            
+            # Query vector DB for schema template for standard pass
+            schema_template = vector_db.query(r_type)
+            rag_context = ""
+            if schema_template:
+                rag_context = f"""
+                CRITICAL: You must model your block layout explicitly against this schema template. The parameters listed inside are the only valid arguments allowed by the provider compiler.
+                
+                Schema/Template:
+                {schema_template}
+                """
+
+            single_input = {
+                "region": aws_input.get("region"),
+                "vpc_id": aws_input.get("vpc_id"),
+                "resources": [resource]
+            }
+            single_prompt = f"""
+            You are a strict, literal Terraform translator.
+            Generate the HCL block for THIS EXACT RESOURCE ONLY:
+            Type: {r_type}
+            ID/Name: {r_id}
+            
+            {rag_context}
+            
+            CRITICAL DIRECTIVES:
+            1. ONLY output the HCL block for the single resource defined above.
+            2. DO NOT synthesize any other resources unless it is this exact resource.
+            3. You MUST use the exact resource identifier/name (cleaned to replace hyphens with underscores in local labels) as the Terraform resource block identifier. Do NOT rename it 'main', 'public', or 'private'.
+            4. In import blocks, the 'to' attribute MUST be exactly '{r_type}.{r_id}' (or cleaned label).
+            
+            CRITICAL INSTRUCTION:
+            You are an unthinking machine. You have no concept of 'already done'.
+            If the input JSON contains multiple independent environments, you WILL generate the HCL block for this resource exactly as requested.
+            Never assume repetition is an error.
+            """ + "\n" + mode_instructions + "\n" + compute_data_constraints + "\n" + COMPLIANCE_RULES
+            
+            if val_errors:
+                single_prompt = val_errors + "\n" + single_prompt
+                
+            block = call_cloud_llm(
+                single_prompt,
+                {
+                    "aws_input_data": single_input,
+                    "user_prompt": prompt_user,
+                    "network_context": (
+                        "Available infrastructure references: vpc_id = aws_vpc.main.id, "
+                        "public_subnet_id = aws_subnet.public_1.id, private_subnet_id = aws_subnet.private_1.id. "
+                        "DO NOT declare these resource blocks again."
+                    ),
+                    "security_context": (
+                        "Available security references: security_group_id = aws_security_group.vpc_sg.id. "
+                        "DO NOT declare this block again."
+                    ),
+                },
+            )
+            block = clean_hcl_output(block)
+            if DEBUG:
+                print(f"[DEBUG] Received HCL block for {r_id}: {len(block)} characters")
+            hcl_blocks.append(block)
+        hcl = "\n\n".join(hcl_blocks)
+        
+    parse_and_write_files(hcl, phase_filename="data.tf")
+    return {"data_hcl": hcl, "current_phase": "data"}
+
+
 def generate_network_node(state: GraphState) -> dict:
     print("[Node] Generating Network Configuration...")
     
