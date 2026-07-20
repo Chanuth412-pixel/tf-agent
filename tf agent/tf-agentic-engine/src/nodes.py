@@ -14,6 +14,8 @@ from src.utils import (
     filter_aws_input_data,
     COMPLIANCE_RULES,
     clean_hcl_output,
+    generate_reflection_context,
+    sanitize_security_group_names,
 )
 
 
@@ -74,9 +76,11 @@ def generate_data_node(state: GraphState) -> dict:
         if rag_context:
             rag_context = f"\nCRITICAL: You must model your block layout explicitly against these schema templates. The parameters listed inside are the only valid arguments allowed by the provider compiler:\n{rag_context}\n"
         
+        reflection_context = generate_reflection_context("data.tf", shielded_errors)
+        enrichment = state.get("reflection_enrichment", "")
         prompt = f"""
-        [CRITICAL SYSTEM DIRECTIVE: COMPILER CORRECTION]
-        You are an expert Terraform engineer. Your previous generation for `data.tf` failed local compiler validation. 
+        {reflection_context}
+        {enrichment}
         
         {rag_context}
         
@@ -84,16 +88,6 @@ def generate_data_node(state: GraphState) -> dict:
         ```terraform
         {previous_hcl}
         ```
-        
-        Compiler Diagnostics:
-        ```json
-        {shielded_errors}
-        ```
-        
-        INSTRUCTIONS:
-        1. Identify the specific block causing the error in the diagnostics.
-        2. Rewrite the entire file, correcting ONLY the invalid properties or hallucinated arguments.
-        3. Maintain all existing valid resources, connections, and output variables exactly as they were. Do NOT invent new resources.
         """
         hcl = call_cloud_llm(
             prompt,
@@ -330,24 +324,14 @@ def generate_network_node(state: GraphState) -> dict:
         previous_hcl = state.get("network_hcl", "")
         shielded_errors = state.get("validation_results", "").replace("{", "{{").replace("}", "}}")
         
+        reflection_context = generate_reflection_context("network.tf", shielded_errors)
         prompt = f"""
-        [CRITICAL SYSTEM DIRECTIVE: COMPILER CORRECTION]
-        You are an expert Terraform engineer. Your previous generation for `network.tf` failed local compiler validation. 
+        {reflection_context}
         
         Original Generated Code:
         ```terraform
         {previous_hcl}
         ```
-        
-        Compiler Diagnostics:
-        ```json
-        {shielded_errors}
-        ```
-        
-        INSTRUCTIONS:
-        1. Identify the specific block causing the error in the diagnostics.
-        2. Rewrite the entire file, correcting ONLY the invalid properties or hallucinated arguments.
-        3. Maintain all existing valid resources, connections, and output variables exactly as they were. Do NOT invent new resources.
         """
         hcl = call_cloud_llm(
             prompt,
@@ -570,24 +554,14 @@ def generate_security_node(state: GraphState) -> dict:
         previous_hcl = state.get("security_hcl", "")
         shielded_errors = state.get("validation_results", "").replace("{", "{{").replace("}", "}}")
         
+        reflection_context = generate_reflection_context("security.tf", shielded_errors)
         prompt = f"""
-        [CRITICAL SYSTEM DIRECTIVE: COMPILER CORRECTION]
-        You are an expert Terraform engineer. Your previous generation for `security.tf` failed local compiler validation. 
+        {reflection_context}
         
         Original Generated Code:
         ```terraform
         {previous_hcl}
         ```
-        
-        Compiler Diagnostics:
-        ```json
-        {shielded_errors}
-        ```
-        
-        INSTRUCTIONS:
-        1. Identify the specific block causing the error in the diagnostics.
-        2. Rewrite the entire file, correcting ONLY the invalid properties or hallucinated arguments.
-        3. Maintain all existing valid resources, connections, and output variables exactly as they were. Do NOT invent new resources.
         """
         hcl = call_cloud_llm(
             prompt,
@@ -789,24 +763,14 @@ def generate_compute_node(state: GraphState) -> dict:
         previous_hcl = state.get("compute_hcl", "")
         shielded_errors = state.get("validation_results", "").replace("{", "{{").replace("}", "}}")
         
+        reflection_context = generate_reflection_context("compute.tf", shielded_errors)
         prompt = f"""
-        [CRITICAL SYSTEM DIRECTIVE: COMPILER CORRECTION]
-        You are an expert Terraform engineer. Your previous generation for `compute.tf` failed local compiler validation. 
+        {reflection_context}
         
         Original Generated Code:
         ```terraform
         {previous_hcl}
         ```
-        
-        Compiler Diagnostics:
-        ```json
-        {shielded_errors}
-        ```
-        
-        INSTRUCTIONS:
-        1. Identify the specific block causing the error in the diagnostics.
-        2. Rewrite the entire file, correcting ONLY the invalid properties or hallucinated arguments.
-        3. Maintain all existing valid resources, connections, and output variables exactly as they were. Do NOT invent new resources.
         """
         hcl = call_cloud_llm(
             prompt,
@@ -1291,6 +1255,10 @@ def validation_node_func(state: GraphState) -> dict:
     from src.utils import scrub_deprecated_s3_syntax
     scrub_deprecated_s3_syntax(workspace_dir)
 
+    # 2. SANITIZER STEP: Strip invalid 'sg-' prefix from security group name properties
+    print("[Node] Sanitizing security group names in generated HCL...")
+    sanitize_security_group_names(workspace_dir)
+
     # Compile the infrastructure graph
     from src.aws_client import compile_infrastructure_graph
     
@@ -1372,7 +1340,7 @@ def validation_node_func(state: GraphState) -> dict:
         except Exception as e:
             print(f"[Warning] Graph rendering failed: {str(e)}")
         
-        return {"is_valid": True, "infrastructure_graph": graph, "failing_files": []}
+        return {"is_valid": True, "infrastructure_graph": graph, "failing_files": [], "reflection_enrichment": ""}
     else:
         errors = state.get("error_logs", [])
         # Merge any error logs from the validator into the node state
@@ -1382,6 +1350,19 @@ def validation_node_func(state: GraphState) -> dict:
         else:
             # Fallback: include a textual representation if no explicit logs provided
             errors.append(str(validation_result))
+
+        # Direct Naming Enforcement Interceptor
+        enhanced_context = ""
+        for diag in validation_result.get("diagnostics", []):
+            summary = diag.get("summary", "")
+            detail = diag.get("detail", "")
+            if "cannot begin with sg-" in detail or "invalid value for name" in summary:
+                enhanced_context += (
+                    "\n[CRITICAL SANITIZATION RULE FAILURE]\n"
+                    f"In resource block '{diag.get('address', '')}', the 'name' attribute value "
+                    "improperly starts with 'sg-'. You MUST strip the 'sg-' prefix or prepend an "
+                    "allowed string (e.g., changing 'sg-3000...' to 'tsg-3000...').\n"
+                )
 
         # Build a single validation_results string that prepends the
         # required CRITICAL instruction before the raw Terraform errors.
@@ -1404,6 +1385,7 @@ def validation_node_func(state: GraphState) -> dict:
             "retry_count": retry,
             "infrastructure_graph": graph,
             "failing_files": validation_result.get("failing_files", []),
+            "reflection_enrichment": enhanced_context,
         }
 
 

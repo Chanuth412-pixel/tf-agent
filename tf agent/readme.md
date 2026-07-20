@@ -222,3 +222,9 @@ python3 main.py
 ```
 
 The system will cycle across structural evaluation loops, feeding compiler faults directly back into generation layers until `Validation Passed: True` is captured at the validation node boundary, automatically producing the sanitized HCL blocks and visual diagram files inside `terraform_workspace/`.
+
+To make draw.io clear
+
+Select everything by pressing Ctrl + A (or Cmd + A).
+
+In the top menu bar, navigate to Arrange -> Layout -> Horizontal Flow (or Vertical Flow).

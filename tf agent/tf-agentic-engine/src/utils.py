@@ -1010,10 +1010,10 @@ def execute_terraform_validation(workspace_dir: str = "terraform_workspace") -> 
             timeout=15,
         )
     except subprocess.TimeoutExpired:
-        return {"is_valid": False, "error_logs": ["Validation timed out."], "failing_files": []}
+        return {"is_valid": False, "error_logs": ["Validation timed out."], "failing_files": [], "diagnostics": []}
 
     if val_result.returncode == 0:
-        return {"is_valid": True, "error_logs": [], "failing_files": []}
+        return {"is_valid": True, "error_logs": [], "failing_files": [], "diagnostics": []}
 
     # 5. Parse JSON semantic errors to feed back to the LLM
     try:
@@ -1028,7 +1028,12 @@ def execute_terraform_validation(workspace_dir: str = "terraform_workspace") -> 
                 if pos.endswith(".tf"):
                     errors_by_file.add(os.path.basename(pos))
 
-        return {"is_valid": False, "error_logs": errors, "failing_files": list(errors_by_file)}
+        return {
+            "is_valid": False,
+            "error_logs": errors,
+            "failing_files": list(errors_by_file),
+            "diagnostics": val_data.get('diagnostics', [])
+        }
 
     except json.JSONDecodeError:
         failing_files = []
@@ -1036,7 +1041,7 @@ def execute_terraform_validation(workspace_dir: str = "terraform_workspace") -> 
         for name in ["network.tf", "security.tf", "compute.tf", "data.tf"]:
             if name in err_text:
                 failing_files.append(name)
-        return {"is_valid": False, "error_logs": [val_result.stderr], "failing_files": failing_files}
+        return {"is_valid": False, "error_logs": [val_result.stderr], "failing_files": failing_files, "diagnostics": []}
 
 
 def parse_dependencies(workspace_dir: str) -> dict:
@@ -1581,4 +1586,47 @@ def filter_aws_input_data(aws_input_data: dict, node_type: str) -> dict:
         if r.get("type") in allowed
     ]
     return filtered
+
+
+def generate_reflection_context(failing_file: str, raw_errors: str) -> str:
+    return f"""
+    [CRITICAL CORRECTION REQUIRED]
+    During the previous compilation pass, your generation for '{failing_file}' failed verification.
+    
+    Compiler Diagnostics:
+    {raw_errors}
+    
+    INSTRUCTIONS:
+    1. Identify the invalid properties or hallucinated argument bindings noted above.
+    2. Rewrite the specific block while preserving original structural connections.
+    3. Do NOT invent attributes outside the provided documentation schemas.
+    """
+
+
+def sanitize_security_group_names(workspace_path="terraform_workspace"):
+    """
+    Scans generated HCL files and strips invalid 'sg-' prefixes from 
+    the actual name property values inside aws_security_group blocks.
+    """
+    if not os.path.exists(workspace_path):
+        return
+    for filename in os.listdir(workspace_path):
+        if not filename.endswith(".tf"):
+            continue
+            
+        filepath = os.path.join(workspace_path, filename)
+        with open(filepath, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        # Regular expression targeting: name = "sg-xxxx" inside resources
+        # Transforms it cleanly to: name = "tsg-xxxx" to bypass the AWS constraint
+        modified_content = re.sub(
+            r'(name\s*=\s*")sg-([^"]+")', 
+            r'\g<1>tsg-\g<2>', 
+            content
+        )
+
+        if modified_content != content:
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(modified_content)
 
