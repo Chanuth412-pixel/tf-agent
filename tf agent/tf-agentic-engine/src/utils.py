@@ -29,6 +29,16 @@ values (e.g., var.vpc_cidr, var.public_subnet_cidr, var.private_subnet_cidr).
 Name the VPC `aws_vpc.main` and subnets `aws_subnet.public_1` and
 `aws_subnet.private_1` so downstream phases can reference them.
 
+CRITICAL SUB-RESOURCE MAPPING RULE:
+Every single 'aws_subnet' resource block MUST include a valid 'vpc_id' argument that points dynamically to the generated VPC resource. Never omit the 'vpc_id' binding.
+
+CORRECT FORMAT:
+resource "aws_subnet" "subnet_example" {{
+  vpc_id            = aws_vpc.vpc_main.id
+  cidr_block        = "10.0.1.0/24"
+  availability_zone = "us-east-1a"
+}}
+
 CRITICAL SYNTAX RULES:
 1. When defining route tables, use the exact singular block `route {{{{...}}}}` (do NOT use `routes`).
 2. For public internet access routes, set the `cidr_block` explicitly to "0.0.0.0/0".

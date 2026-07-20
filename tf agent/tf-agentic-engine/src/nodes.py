@@ -325,8 +325,10 @@ def generate_network_node(state: GraphState) -> dict:
         shielded_errors = state.get("validation_results", "").replace("{", "{{").replace("}", "}}")
         
         reflection_context = generate_reflection_context("network.tf", shielded_errors)
+        enrichment = state.get("reflection_enrichment", "")
         prompt = f"""
         {reflection_context}
+        {enrichment}
         
         Original Generated Code:
         ```terraform
@@ -555,8 +557,10 @@ def generate_security_node(state: GraphState) -> dict:
         shielded_errors = state.get("validation_results", "").replace("{", "{{").replace("}", "}}")
         
         reflection_context = generate_reflection_context("security.tf", shielded_errors)
+        enrichment = state.get("reflection_enrichment", "")
         prompt = f"""
         {reflection_context}
+        {enrichment}
         
         Original Generated Code:
         ```terraform
@@ -764,8 +768,10 @@ def generate_compute_node(state: GraphState) -> dict:
         shielded_errors = state.get("validation_results", "").replace("{", "{{").replace("}", "}}")
         
         reflection_context = generate_reflection_context("compute.tf", shielded_errors)
+        enrichment = state.get("reflection_enrichment", "")
         prompt = f"""
         {reflection_context}
+        {enrichment}
         
         Original Generated Code:
         ```terraform
