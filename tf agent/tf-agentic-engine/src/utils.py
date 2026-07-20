@@ -49,6 +49,46 @@ CRITICAL SYNTAX RULES:
 2. Always reference the VPC using the exact attribute `aws_vpc.main.id`.
 3. Do NOT emit naked top-level assignments; if local values are required wrap them inside `locals {{{{...}}}}`.
 4. Avoid duplicating security group names between runs; use fixed resource addressing.
+
+CRITICAL SECURITY GROUP HCL RULES:
+1. NEVER use the list assignment syntax (`ingress = [{{...}}]` or `egress = [{{...}}]`) for security group rules.
+2. You MUST use the block syntax without the equals sign or brackets: 
+   ingress {{
+     from_port   = 80
+     to_port     = 80
+     protocol    = "tcp"
+     cidr_blocks = ["0.0.0.0/0"]
+   }}
+3. Do not include optional attributes like `ipv6_cidr_blocks`, `prefix_list_ids`, or `security_groups` unless they are explicitly provided in the source data.
+
+CRITICAL TERRAFORM SYNTAX ENFORCEMENT:
+When generating aws_security_group resources, you MUST use standard HCL block syntax for rules.
+DO NOT use JSON arrays, and DO NOT leave trailing brackets like 'ingress]'.
+Ensure the 'tags' block is placed INSIDE the main resource block before the final closing brace.
+
+CORRECT FORMAT:
+resource "aws_security_group" "example" {{
+  description = "Example SG"
+  vpc_id      = "vpc-12345"
+
+  ingress {{
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }}
+
+  egress {{
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }}
+
+  tags = {{
+    Name = "example_sg"
+  }}
+}}
 """
 
 COMPUTE_PROMPT = f"""
@@ -101,7 +141,18 @@ CRITICAL CONSTRAINT: Return ONLY valid, raw HCL structural syntax code blocks. D
   1. `vpc_zone_identifier` MUST be a list/set of strings (e.g., `["subnet-123"]`, not `"subnet-123"`).
   2. STRICTLY FORBIDDEN: You are strictly forbidden from writing a `tags` (e.g. `tags = [...]`) or `tags_all` attribute block inside `aws_autoscaling_group`. You MUST define every tag using a separate `tag {{ key = "..." value = "..." propagate_at_launch = true }}` block.
   3. You MUST always specify one of `launch_configuration`, `launch_template`, or `mixed_instances_policy` (e.g., `launch_template {{ id = "..." }}`). If none is specified in the telemetry, reference a placeholder launch template block.
-- For `aws_dynamodb_table`: You MUST set `billing_mode = "PAY_PER_REQUEST"`. You are strictly FORBIDDEN from specifying `read_capacity_units` or `write_capacity_units`.
+- For `aws_dynamodb_table`: You MUST set `billing_mode = "PAY_PER_REQUEST"`. You are strictly FORBIDDEN from specifying `read_capacity_units` or `write_capacity_units`. You MUST define attributes using nested `attribute` blocks (e.g., `attribute { name = "UserId" type = "S" }`). You are strictly FORBIDDEN from using root-level 'attribute_name' or 'key_type' arguments.
+  Example:
+  resource "aws_dynamodb_table" "example" {
+    name         = "example_table"
+    billing_mode = "PAY_PER_REQUEST"
+    hash_key     = "UserId"
+
+    attribute {
+      name = "UserId"
+      type = "S"
+    }
+  }
 - For `aws_iam_role`: You MUST always specify the required **`assume_role_policy`** argument. If the exact policy document is not provided in the AWS telemetry, default to a standard EC2 service assume-role policy trust document via `jsonencode`.
 - For Terraform 1.5+ `import` blocks: You MUST always specify the `to` and `id` arguments. The argument `id` is REQUIRED and must be named exactly `id` (e.g., `id = "..."`). You are strictly FORBIDDEN from using `name = "..."` or any other argument name in place of `id`.
   CRITICAL: All `import` blocks MUST be top-level blocks outside and separate from any resource blocks. You are strictly FORBIDDEN from nesting `import` blocks inside a resource block body.
@@ -118,6 +169,25 @@ CRITICAL CONSTRAINT: Return ONLY valid, raw HCL structural syntax code blocks. D
     }
   }
 - For resource local names (the block identifier after the resource type, e.g. `resource "aws_s3_bucket" "local_name"`): You MUST replace any hyphens (`-`) in the AWS resource name with underscores (`_`) (e.g. use `tf_engine_state_table` instead of `tf-engine-state-table` for the block identifier). However, the actual resource argument fields (like `name = "..."`, `bucket = "..."`, and `id = "..."` inside the `import` block) MUST keep their original hyphens to match AWS exactly.
+
+  CRITICAL TERRAFORM NAMING CONVENTION FOR IMPORT MODE:
+  Terraform logical resource identifiers MUST begin with a letter or an underscore. They cannot begin with a number.
+  If an AWS resource ID (like an S3 bucket name) begins with a number, you MUST prepend a string (such as 's3_') to the logical name in BOTH the resource block AND the import block. 
+  The actual AWS 'id' in the import block must remain unchanged.
+
+  INCORRECT:
+  import {
+    to = aws_s3_bucket.12345_my_bucket
+    id = "12345_my_bucket"
+  }
+  resource "aws_s3_bucket" "12345_my_bucket" { ... }
+
+  CORRECT:
+  import {
+    to = aws_s3_bucket.s3_12345_my_bucket
+    id = "12345_my_bucket"
+  }
+  resource "aws_s3_bucket" "s3_12345_my_bucket" { ... }
 - Do NOT add a `description` argument to resources unless it is explicitly supported by that resource type (e.g. `aws_security_group` supports it, but `aws_autoscaling_group` and `aws_subnet` do NOT).
 - For `aws_db_instance`: NEVER place the `subnet_ids` argument directly inside the resource block. You are strictly FORBIDDEN from putting a list of subnet IDs inside `aws_db_instance`. Instead, you MUST create a separate `aws_db_subnet_group` resource specifying those subnets in its `subnet_ids` field, and link the `aws_db_instance` to the subnet group by setting `db_subnet_group_name = aws_db_subnet_group.<name>.name`.
 ========================================================================
@@ -555,6 +625,18 @@ def post_process_hcl_compliance(workspace_dir: str) -> None:
             
         modified = False
         new_content = content
+
+        # Fix: Strip quotes from the 'to' argument in import blocks
+        # Converts: to = "aws_instance.my_ec2" -> to = aws_instance.my_ec2
+        cleaned_content = re.sub(r'\bto\s*=\s*"([^"]+)"', r'to = \1', new_content)
+        
+        # Fix: Strip completely invalid DynamoDB 'attribute_name' and 'key_type' root arguments
+        cleaned_content = re.sub(r'^\s*attribute_name\s*=.*$\n', '', cleaned_content, flags=re.MULTILINE)
+        cleaned_content = re.sub(r'^\s*key_type\s*=.*$\n', '', cleaned_content, flags=re.MULTILINE)
+        
+        if cleaned_content != new_content:
+            new_content = cleaned_content
+            modified = True
         
         # Nuclear Option: Aggressively remove unrequested/hallucinated internet gateways and route tables
         current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -845,10 +927,43 @@ def post_process_hcl_compliance(workspace_dir: str) -> None:
                 print(f"Error writing corrected file {tf_file}: {e}")
 
 
+def fix_numeric_tf_names(workspace_path="terraform_workspace"):
+    """
+    Scans all generated .tf files and prefixes logical resource names 
+    that start with a number with 'id_' to satisfy Terraform HCL requirements.
+    """
+    if not os.path.exists(workspace_path):
+        return
+    for filename in os.listdir(workspace_path):
+        if not filename.endswith(".tf"):
+            continue
+            
+        filepath = os.path.join(workspace_path, filename)
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            # Fix 1: Resource block definitions
+            # Matches: resource "aws_s3_bucket" "5261..." -> "id_5261..."
+            content = re.sub(r'(resource\s+"[^"]+"\s+")(\d)', r'\g<1>id_\g<2>', content)
+
+            # Fix 2: Downstream references and import blocks
+            # Matches: aws_s3_bucket.5261... -> aws_s3_bucket.id_5261...
+            content = re.sub(r'(aws_[a-zA-Z0-9_]+\.)(\d)', r'\g<1>id_\g<2>', content)
+
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(content)
+        except Exception as e:
+            print(f"Error scrubbing numeric names in {filepath}: {e}")
+
+
 def execute_terraform_validation(workspace_dir: str = "terraform_workspace") -> dict:
     """
     Runs offline AST syntax formatting, then local semantic validation.
     """
+    # Programmatic fix for numeric Terraform names before validation
+    fix_numeric_tf_names(workspace_dir)
+
     # 1. Format the HCL (AST Syntax Check)
     try:
         fmt_result = subprocess.run(
@@ -1176,6 +1291,8 @@ def generate_png_graph(state: dict, workspace_dir: str = "terraform_workspace") 
     nodes = infra_graph.get("nodes", {})
     edges = infra_graph.get("edges", [])
 
+    print(f"[DEBUG RENDERER] Total edges received for drawing: {len(edges)}")
+
     # Group nodes by domain
     domains = {
         "Network": [],
@@ -1198,7 +1315,12 @@ def generate_png_graph(state: dict, workspace_dir: str = "terraform_workspace") 
     dot_lines = [
         "digraph G {",
         "  rankdir=TB;",
-        '  node [style="filled", shape="box", fontname="Arial"];'
+        "  compound=true;",
+        "  nodesep=1.0;",
+        "  ranksep=1.5;",
+        "  splines=ortho;",
+        "  concentrate=true;",
+        '  node [style="filled", shape="box", fontname="Arial", fontsize=11, margin="0.2,0.1"];'
     ]
 
     domain_styles = {
@@ -1247,6 +1369,10 @@ def generate_png_graph(state: dict, workspace_dir: str = "terraform_workspace") 
 
     with open(dot_file_path, "w", encoding="utf-8") as f:
         f.write(dot_content)
+
+    print("\n--- GENERATED DOT CONTENT ---")
+    print(dot_content)
+    print("-----------------------------\n")
 
     # Convert dot to png using the dot CLI tool
     try:
@@ -1406,6 +1532,12 @@ def scrub_deprecated_s3_syntax(workspace_dir: str = "terraform_workspace"):
         if "key_schema" in sanitized_content:
             sanitized_content = re.sub(r'key_schema\s*\{\s*(.*?)\s*\}', r'\1', sanitized_content, flags=re.DOTALL)
             
+        if filename == "security.tf" or "ingress" in sanitized_content or "egress" in sanitized_content:
+            # Step 1: Strip the assignment operator and opening bracket from ingress/egress rules
+            sanitized_content = re.sub(r'(ingress|egress)\s*=\s*\[', r'\1', sanitized_content)
+            # Step 2: Strip any trailing closing brackets that exist on their own line
+            sanitized_content = re.sub(r'^\s*\]\s*$', '', sanitized_content, flags=re.MULTILINE)
+
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(sanitized_content)
 
