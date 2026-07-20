@@ -994,10 +994,10 @@ def execute_terraform_validation(workspace_dir: str = "terraform_workspace") -> 
             timeout=15,
         )
     except subprocess.TimeoutExpired:
-        return {"is_valid": False, "error_logs": ["Init timed out."]}
+        return {"is_valid": False, "error_logs": ["Init timed out."], "failing_files": []}
 
     if init_result.returncode != 0:
-        return {"is_valid": False, "error_logs": [f"Init Failed: {init_result.stderr}"]}
+        return {"is_valid": False, "error_logs": [f"Init Failed: {init_result.stderr}"], "failing_files": []}
 
     # 4. Deep Semantic Validation
     try:
@@ -1010,24 +1010,33 @@ def execute_terraform_validation(workspace_dir: str = "terraform_workspace") -> 
             timeout=15,
         )
     except subprocess.TimeoutExpired:
-        return {"is_valid": False, "error_logs": ["Validation timed out."]}
+        return {"is_valid": False, "error_logs": ["Validation timed out."], "failing_files": []}
 
     if val_result.returncode == 0:
-        return {"is_valid": True, "error_logs": []}
+        return {"is_valid": True, "error_logs": [], "failing_files": []}
 
     # 5. Parse JSON semantic errors to feed back to the LLM
     try:
         val_data = json.loads(val_result.stdout)
         errors = []
+        errors_by_file = set()
         for diag in val_data.get('diagnostics', []):
             if diag.get('severity') == 'error':
                 error_msg = f"{diag.get('summary')}: {diag.get('detail', '')}"
                 errors.append(error_msg.strip())
+                pos = diag.get("range", {}).get("filename", "")
+                if pos.endswith(".tf"):
+                    errors_by_file.add(os.path.basename(pos))
 
-        return {"is_valid": False, "error_logs": errors}
+        return {"is_valid": False, "error_logs": errors, "failing_files": list(errors_by_file)}
 
     except json.JSONDecodeError:
-        return {"is_valid": False, "error_logs": [val_result.stderr]}
+        failing_files = []
+        err_text = val_result.stderr or ""
+        for name in ["network.tf", "security.tf", "compute.tf", "data.tf"]:
+            if name in err_text:
+                failing_files.append(name)
+        return {"is_valid": False, "error_logs": [val_result.stderr], "failing_files": failing_files}
 
 
 def parse_dependencies(workspace_dir: str) -> dict:

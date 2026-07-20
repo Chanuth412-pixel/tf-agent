@@ -30,18 +30,65 @@ def routing_decision_router(state: GraphState) -> str:
         )
         return "complete"
 
-    # If validation failed but retries remain, restart the pipeline from the network generation
-    # to give the whole graph a chance to correct cascading issues.
-    if not state.get("is_valid") and 0 < state.get("retry_count", 0) < state.get("max_retries", 3):
-        print("[Router] Validation failed; routing back to network for full re-run.")
-        return "fix_network"
+    failing_files = state.get("failing_files", [])
+    print(f"[Router] Validation failed. Failing files: {failing_files}")
 
-    phase = state.get("current_phase", "network")
-    return f"fix_{phase}"
+    if "network.tf" in failing_files:
+        print("[Router] Routing to fix_network due to errors in network.tf")
+        return "fix_network"
+    elif "security.tf" in failing_files:
+        print("[Router] Routing to fix_security due to errors in security.tf")
+        return "fix_security"
+    elif "compute.tf" in failing_files:
+        print("[Router] Routing to fix_compute due to errors in compute.tf")
+        return "fix_compute"
+    elif "data.tf" in failing_files:
+        print("[Router] Routing to fix_data due to errors in data.tf")
+        return "fix_data"
+
+    # Fallback to network loopback to ensure the whole graph has a chance to correct cascading issues
+    print("[Router] No specific file isolated in failing_files; routing back to network for fallback re-run.")
+    return "fix_network"
 
 
 def generate_network_node(state: GraphState) -> dict:
     print("[Node] Generating Network Configuration...")
+    
+    if "network.tf" in state.get("failing_files", []):
+        print("[Node] network.tf has compilation errors. Intercepting with Reflection Prompt.")
+        previous_hcl = state.get("network_hcl", "")
+        shielded_errors = state.get("validation_results", "").replace("{", "{{").replace("}", "}}")
+        
+        prompt = f"""
+        [CRITICAL SYSTEM DIRECTIVE: COMPILER CORRECTION]
+        You are an expert Terraform engineer. Your previous generation for `network.tf` failed local compiler validation. 
+        
+        Original Generated Code:
+        ```terraform
+        {previous_hcl}
+        ```
+        
+        Compiler Diagnostics:
+        ```json
+        {shielded_errors}
+        ```
+        
+        INSTRUCTIONS:
+        1. Identify the specific block causing the error in the diagnostics.
+        2. Rewrite the entire file, correcting ONLY the invalid properties or hallucinated arguments.
+        3. Maintain all existing valid resources, connections, and output variables exactly as they were. Do NOT invent new resources.
+        """
+        hcl = call_cloud_llm(
+            prompt,
+            {
+                "aws_input_data": state.get("aws_input_data", {}),
+                "user_prompt": state.get("user_prompt", ""),
+            },
+        )
+        hcl = clean_hcl_output(hcl)
+        parse_and_write_files(hcl, phase_filename="network.tf")
+        return {"network_hcl": hcl, "current_phase": "network"}
+
     mode = state.get("deployment_mode")
     aws_input = filter_aws_input_data(state.get("aws_input_data", {}), "network")
 
@@ -246,6 +293,42 @@ def generate_network_node(state: GraphState) -> dict:
 
 def generate_security_node(state: GraphState) -> dict:
     print("[Node] Generating Security Configuration...")
+    
+    if "security.tf" in state.get("failing_files", []):
+        print("[Node] security.tf has compilation errors. Intercepting with Reflection Prompt.")
+        previous_hcl = state.get("security_hcl", "")
+        shielded_errors = state.get("validation_results", "").replace("{", "{{").replace("}", "}}")
+        
+        prompt = f"""
+        [CRITICAL SYSTEM DIRECTIVE: COMPILER CORRECTION]
+        You are an expert Terraform engineer. Your previous generation for `security.tf` failed local compiler validation. 
+        
+        Original Generated Code:
+        ```terraform
+        {previous_hcl}
+        ```
+        
+        Compiler Diagnostics:
+        ```json
+        {shielded_errors}
+        ```
+        
+        INSTRUCTIONS:
+        1. Identify the specific block causing the error in the diagnostics.
+        2. Rewrite the entire file, correcting ONLY the invalid properties or hallucinated arguments.
+        3. Maintain all existing valid resources, connections, and output variables exactly as they were. Do NOT invent new resources.
+        """
+        hcl = call_cloud_llm(
+            prompt,
+            {
+                "aws_input_data": state.get("aws_input_data", {}),
+                "user_prompt": state.get("user_prompt", ""),
+            },
+        )
+        hcl = clean_hcl_output(hcl)
+        parse_and_write_files(hcl, phase_filename="security.tf")
+        return {"security_hcl": hcl, "current_phase": "security"}
+
     mode = state.get("deployment_mode")
     aws_input = filter_aws_input_data(state.get("aws_input_data", {}), "security")
 
@@ -429,6 +512,42 @@ def generate_security_node(state: GraphState) -> dict:
 
 def generate_compute_node(state: GraphState) -> dict:
     print("[Node] Generating Compute Configuration...")
+    
+    if "compute.tf" in state.get("failing_files", []):
+        print("[Node] compute.tf has compilation errors. Intercepting with Reflection Prompt.")
+        previous_hcl = state.get("compute_hcl", "")
+        shielded_errors = state.get("validation_results", "").replace("{", "{{").replace("}", "}}")
+        
+        prompt = f"""
+        [CRITICAL SYSTEM DIRECTIVE: COMPILER CORRECTION]
+        You are an expert Terraform engineer. Your previous generation for `compute.tf` failed local compiler validation. 
+        
+        Original Generated Code:
+        ```terraform
+        {previous_hcl}
+        ```
+        
+        Compiler Diagnostics:
+        ```json
+        {shielded_errors}
+        ```
+        
+        INSTRUCTIONS:
+        1. Identify the specific block causing the error in the diagnostics.
+        2. Rewrite the entire file, correcting ONLY the invalid properties or hallucinated arguments.
+        3. Maintain all existing valid resources, connections, and output variables exactly as they were. Do NOT invent new resources.
+        """
+        hcl = call_cloud_llm(
+            prompt,
+            {
+                "aws_input_data": state.get("aws_input_data", {}),
+                "user_prompt": state.get("user_prompt", ""),
+            },
+        )
+        hcl = clean_hcl_output(hcl)
+        parse_and_write_files(hcl, phase_filename="compute.tf")
+        return {"compute_hcl": hcl, "current_phase": "compute"}
+
     mode = state.get("deployment_mode")
     aws_input = filter_aws_input_data(state.get("aws_input_data", {}), "compute")
 
@@ -643,6 +762,42 @@ def generate_compute_node(state: GraphState) -> dict:
 
 def generate_data_node(state: GraphState) -> dict:
     print("[Node] Generating Data Configuration...")
+    
+    if "data.tf" in state.get("failing_files", []):
+        print("[Node] data.tf has compilation errors. Intercepting with Reflection Prompt.")
+        previous_hcl = state.get("data_hcl", "")
+        shielded_errors = state.get("validation_results", "").replace("{", "{{").replace("}", "}}")
+        
+        prompt = f"""
+        [CRITICAL SYSTEM DIRECTIVE: COMPILER CORRECTION]
+        You are an expert Terraform engineer. Your previous generation for `data.tf` failed local compiler validation. 
+        
+        Original Generated Code:
+        ```terraform
+        {previous_hcl}
+        ```
+        
+        Compiler Diagnostics:
+        ```json
+        {shielded_errors}
+        ```
+        
+        INSTRUCTIONS:
+        1. Identify the specific block causing the error in the diagnostics.
+        2. Rewrite the entire file, correcting ONLY the invalid properties or hallucinated arguments.
+        3. Maintain all existing valid resources, connections, and output variables exactly as they were. Do NOT invent new resources.
+        """
+        hcl = call_cloud_llm(
+            prompt,
+            {
+                "aws_input_data": state.get("aws_input_data", {}),
+                "user_prompt": state.get("user_prompt", ""),
+            },
+        )
+        hcl = clean_hcl_output(hcl)
+        parse_and_write_files(hcl, phase_filename="data.tf")
+        return {"data_hcl": hcl, "current_phase": "data"}
+
     mode = state.get("deployment_mode")
     aws_input = filter_aws_input_data(state.get("aws_input_data", {}), "data")
 
@@ -946,7 +1101,7 @@ def validation_node_func(state: GraphState) -> dict:
         except Exception as e:
             print(f"[Warning] Graph rendering failed: {str(e)}")
         
-        return {"is_valid": True, "infrastructure_graph": graph}
+        return {"is_valid": True, "infrastructure_graph": graph, "failing_files": []}
     else:
         errors = state.get("error_logs", [])
         # Merge any error logs from the validator into the node state
@@ -977,6 +1132,7 @@ def validation_node_func(state: GraphState) -> dict:
             "validation_results": validation_results,
             "retry_count": retry,
             "infrastructure_graph": graph,
+            "failing_files": validation_result.get("failing_files", []),
         }
 
 

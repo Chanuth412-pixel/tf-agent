@@ -22,6 +22,7 @@ class GraphState(TypedDict):
     data_hcl: str
     validation_results: str
     is_valid: bool
+    failing_files: List[str]
 
     # --- Topology & Compliance ---
     infrastructure_graph: InfrastructureGraph
@@ -42,6 +43,7 @@ def create_initial_state(raw_json: Dict) -> GraphState:
         data_hcl="",
         validation_results="",
         is_valid=False,
+        failing_files=[],
         infrastructure_graph={"nodes": {}, "edges": []},
         compliance_report=[],
     )
